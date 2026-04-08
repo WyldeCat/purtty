@@ -135,6 +135,29 @@ mod tests {
     }
 
     #[test]
+    fn wide_character_occupies_two_cells() {
+        let mut t = Terminal::new(2, 10);
+        t.advance_str("a안b");
+        assert_eq!(t.grid().cell(0, 0).ch, 'a');
+        assert_eq!(t.grid().cell(0, 1).ch, '안');
+        assert_eq!(t.grid().cell(0, 2).ch, grid::WIDE_CONT);
+        assert_eq!(t.grid().cell(0, 3).ch, 'b');
+        assert_eq!(t.grid().cursor(), Cursor { row: 0, col: 4 });
+    }
+
+    #[test]
+    fn wide_character_wraps_when_no_room() {
+        let mut t = Terminal::new(2, 3);
+        // "aa" fills cols 0..2, then 안 (width 2) can't fit in col 2 alone
+        // (it would span 2..4 but cols=3). Must wrap to next line.
+        t.advance_str("aa안");
+        assert_eq!(t.grid().cell(0, 0).ch, 'a');
+        assert_eq!(t.grid().cell(0, 1).ch, 'a');
+        assert_eq!(t.grid().cell(1, 0).ch, '안');
+        assert_eq!(t.grid().cell(1, 1).ch, grid::WIDE_CONT);
+    }
+
+    #[test]
     fn sgr_empty_params_resets_pen() {
         let mut t = Terminal::new(2, 10);
         t.advance_str("\x1b[1;31mX\x1b[mY");

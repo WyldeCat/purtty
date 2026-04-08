@@ -10,3 +10,4 @@ description = "Terminal grid model and VT/xterm parser for purrtty"
 thiserror = { workspace = true }
 vte = "0.13"
 bitflags = "2"
+unicode-width = "0.2"

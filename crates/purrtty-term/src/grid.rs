@@ -6,7 +6,14 @@
 
 use std::collections::VecDeque;
 
+use unicode_width::UnicodeWidthChar;
+
 use crate::cell::{Attrs, Cell, Color, Pen};
+
+/// Sentinel character used in the right-hand cell of a wide (CJK, emoji)
+/// glyph. The renderer skips cells with this `ch` when building its text
+/// run so the wide glyph isn't followed by an extraneous space.
+pub const WIDE_CONT: char = '\0';
 
 /// Cursor position within the grid (0-indexed, `(row, col)`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -154,15 +161,35 @@ impl Grid {
         self.cursor.col = self.cursor.col.min(cols - 1);
     }
 
-    /// Write `ch` at the cursor and advance. Wraps to next line and scrolls
-    /// when reaching the bottom-right.
+    /// Write `ch` at the cursor and advance. Wraps to the next line and
+    /// scrolls when reaching the bottom-right. Wide characters (CJK, emoji)
+    /// occupy two cells; the right-hand cell is a sentinel that the
+    /// renderer skips. Zero-width characters (combining marks) are dropped
+    /// for now — real combining support is a later milestone.
     pub fn put_char(&mut self, ch: char) {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width == 0 {
+            return;
+        }
         if self.cursor.col >= self.size.cols {
+            self.wrap();
+        }
+        // If a wide char can't fit on this line, wrap before writing.
+        if width == 2 && self.cursor.col + 1 >= self.size.cols {
             self.wrap();
         }
         let idx = self.index(self.cursor.row, self.cursor.col);
         self.cells[idx] = self.pen.stamp(ch);
-        self.cursor.col += 1;
+        if width == 2 {
+            let cont_idx = self.index(self.cursor.row, self.cursor.col + 1);
+            self.cells[cont_idx] = Cell {
+                ch: WIDE_CONT,
+                fg: self.pen.fg,
+                bg: self.pen.bg,
+                attrs: self.pen.attrs,
+            };
+        }
+        self.cursor.col += width;
     }
 
     fn wrap(&mut self) {

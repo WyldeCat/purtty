@@ -159,6 +159,12 @@ impl Renderer {
         for view_idx in 0..rows {
             if let Some(row) = grid.row_at(view_idx, scroll_offset) {
                 for cell in row {
+                    // Skip right-hand continuation cells of wide glyphs —
+                    // the wide char in the preceding cell already covers
+                    // that visual column.
+                    if cell.ch == purrtty_term::grid::WIDE_CONT {
+                        continue;
+                    }
                     text.push(cell.ch);
                 }
             }
