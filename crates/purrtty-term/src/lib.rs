@@ -165,4 +165,166 @@ mod tests {
         assert_eq!(t.grid().cell(0, 1).fg, Color::Default);
         assert!(!t.grid().cell(0, 1).attrs.contains(Attrs::BOLD));
     }
+
+    // ---------- M3.5 VT hardening ----------
+
+    #[test]
+    fn cursor_up_down_forward_back() {
+        let mut t = Terminal::new(5, 10);
+        // Move down 3, right 4, then up 2, back 1.
+        t.advance_str("\x1b[3B\x1b[4C\x1b[2A\x1b[1D*");
+        assert_eq!(t.grid().cell(1, 3).ch, '*');
+    }
+
+    #[test]
+    fn cursor_horizontal_absolute_is_one_indexed() {
+        let mut t = Terminal::new(2, 10);
+        t.advance_str("\x1b[5G*");
+        assert_eq!(t.grid().cell(0, 4).ch, '*');
+    }
+
+    #[test]
+    fn vertical_position_absolute_is_one_indexed() {
+        let mut t = Terminal::new(5, 10);
+        t.advance_str("\x1b[3d*");
+        assert_eq!(t.grid().cell(2, 0).ch, '*');
+    }
+
+    #[test]
+    fn insert_line_pushes_rows_down() {
+        let mut t = Terminal::new(4, 3);
+        t.advance_str("aaa\r\nbbb\r\nccc\r\nddd");
+        // Home, then insert a line.
+        t.advance_str("\x1b[1;1H\x1b[L");
+        assert_eq!(row_text(t.grid(), 0), "   ");
+        assert_eq!(row_text(t.grid(), 1), "aaa");
+        assert_eq!(row_text(t.grid(), 2), "bbb");
+        assert_eq!(row_text(t.grid(), 3), "ccc");
+    }
+
+    #[test]
+    fn delete_line_pulls_rows_up() {
+        let mut t = Terminal::new(4, 3);
+        t.advance_str("aaa\r\nbbb\r\nccc\r\nddd");
+        t.advance_str("\x1b[1;1H\x1b[M");
+        assert_eq!(row_text(t.grid(), 0), "bbb");
+        assert_eq!(row_text(t.grid(), 1), "ccc");
+        assert_eq!(row_text(t.grid(), 2), "ddd");
+        assert_eq!(row_text(t.grid(), 3), "   ");
+    }
+
+    #[test]
+    fn insert_chars_within_line() {
+        let mut t = Terminal::new(2, 6);
+        t.advance_str("abcdef");
+        // CUP to col 3, insert 2 blanks.
+        t.advance_str("\x1b[1;3H\x1b[2@");
+        assert_eq!(row_text(t.grid(), 0), "ab  cd");
+    }
+
+    #[test]
+    fn delete_chars_within_line() {
+        let mut t = Terminal::new(2, 6);
+        t.advance_str("abcdef");
+        t.advance_str("\x1b[1;3H\x1b[2P");
+        assert_eq!(row_text(t.grid(), 0), "abef  ");
+    }
+
+    #[test]
+    fn erase_chars_blanks_in_place() {
+        let mut t = Terminal::new(2, 6);
+        t.advance_str("abcdef");
+        t.advance_str("\x1b[1;3H\x1b[2X");
+        assert_eq!(row_text(t.grid(), 0), "ab  ef");
+    }
+
+    #[test]
+    fn scroll_region_limits_line_feed_scroll() {
+        let mut t = Terminal::new(5, 3);
+        t.advance_str("aaa\r\nbbb\r\nccc\r\nddd\r\neee");
+        // Set scroll region rows 2..=4 (1-indexed in VT, so rows 1..4
+        // zero-indexed). DECSTBM homes cursor to (0,0).
+        t.advance_str("\x1b[2;4r");
+        // CUP to bottom of region (row 4 in 1-index = idx 3).
+        t.advance_str("\x1b[4;1H");
+        // Line feed: should scroll the region [1,4) up by one, losing
+        // row 1 content, row 0 untouched.
+        t.advance_str("\n");
+        assert_eq!(row_text(t.grid(), 0), "aaa"); // untouched (outside region)
+        assert_eq!(row_text(t.grid(), 1), "ccc"); // was row 2
+        assert_eq!(row_text(t.grid(), 2), "ddd"); // was row 3
+        assert_eq!(row_text(t.grid(), 3), "   "); // new blank row at region bottom
+        assert_eq!(row_text(t.grid(), 4), "eee"); // untouched (outside region)
+    }
+
+    #[test]
+    fn cursor_save_and_restore_via_decsc() {
+        let mut t = Terminal::new(4, 10);
+        t.advance_str("\x1b[2;5H"); // row 2, col 5 (1-indexed)
+        t.advance_str("\x1b7"); // DECSC
+        t.advance_str("\x1b[4;1HXX"); // move and write
+        t.advance_str("\x1b8"); // DECRC
+        t.advance_str("*");
+        assert_eq!(t.grid().cell(1, 4).ch, '*');
+    }
+
+    #[test]
+    fn cursor_save_restore_preserves_pen() {
+        let mut t = Terminal::new(2, 10);
+        // Set red fg, save. Reset pen. Restore — pen should be red again.
+        t.advance_str("\x1b[31m\x1b7\x1b[0m\x1b8R");
+        assert_eq!(t.grid().cell(0, 0).ch, 'R');
+        assert_eq!(t.grid().cell(0, 0).fg, Color::Indexed(1));
+    }
+
+    #[test]
+    fn alt_screen_enter_and_leave_swaps_buffers() {
+        let mut t = Terminal::new(3, 5);
+        t.advance_str("hello");
+        // Enter alt screen; buffer should be blank and cursor at origin.
+        t.advance_str("\x1b[?1049h");
+        assert!(t.grid().is_alt_screen());
+        for r in 0..3 {
+            assert_eq!(row_text(t.grid(), r), "     ");
+        }
+        t.advance_str("WORLD");
+        assert_eq!(row_text(t.grid(), 0), "WORLD");
+        // Leave alt screen; primary should be restored.
+        t.advance_str("\x1b[?1049l");
+        assert!(!t.grid().is_alt_screen());
+        assert_eq!(row_text(t.grid(), 0), "hello");
+    }
+
+    #[test]
+    fn alt_screen_does_not_push_to_scrollback() {
+        let mut t = Terminal::new(2, 3);
+        t.advance_str("\x1b[?1049h");
+        // Fill both rows and force a scroll within the alt buffer.
+        t.advance_str("aaa\r\nbbb\r\nccc");
+        assert_eq!(t.grid().scrollback_len(), 0);
+        // Exit and the primary scrollback should still be empty.
+        t.advance_str("\x1b[?1049l");
+        assert_eq!(t.grid().scrollback_len(), 0);
+    }
+
+    #[test]
+    fn dec_mode_25_toggles_cursor_visibility() {
+        let mut t = Terminal::new(2, 3);
+        assert!(t.grid().cursor_visible());
+        t.advance_str("\x1b[?25l");
+        assert!(!t.grid().cursor_visible());
+        t.advance_str("\x1b[?25h");
+        assert!(t.grid().cursor_visible());
+    }
+
+    #[test]
+    fn reverse_index_at_top_scrolls_down() {
+        let mut t = Terminal::new(3, 3);
+        t.advance_str("aaa\r\nbbb\r\nccc\x1b[1;1H");
+        // RI at row 0 — should scroll region down by 1, blanking top row.
+        t.advance_str("\x1bM");
+        assert_eq!(row_text(t.grid(), 0), "   ");
+        assert_eq!(row_text(t.grid(), 1), "aaa");
+        assert_eq!(row_text(t.grid(), 2), "bbb");
+    }
 }
