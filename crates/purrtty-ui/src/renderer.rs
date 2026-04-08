@@ -141,7 +141,7 @@ impl Renderer {
         );
     }
 
-    pub fn render(&mut self, grid: &Grid) -> Result<()> {
+    pub fn render(&mut self, grid: &Grid, scroll_offset: usize) -> Result<()> {
         self.viewport.update(
             &self.queue,
             Resolution {
@@ -150,13 +150,17 @@ impl Renderer {
             },
         );
 
-        // Build the frame text by flattening the grid row-by-row.
+        // Build the frame text by walking the visible view. Scroll offset
+        // pulls rows out of scrollback into the top of the view; 0 is the
+        // live bottom.
         let rows = grid.rows();
         let cols = grid.cols();
         let mut text = String::with_capacity(rows * (cols + 1));
-        for row in grid.rows_iter() {
-            for cell in row {
-                text.push(cell.ch);
+        for view_idx in 0..rows {
+            if let Some(row) = grid.row_at(view_idx, scroll_offset) {
+                for cell in row {
+                    text.push(cell.ch);
+                }
             }
             text.push('\n');
         }

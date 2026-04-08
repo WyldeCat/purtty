@@ -18,7 +18,7 @@ use purrtty_ui::Renderer;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -39,7 +39,13 @@ struct PurrttyApp {
     pty: Option<PtySession>,
     terminal: Option<SharedTerminal>,
     proxy: Option<EventLoopProxy<UserEvent>>,
+    /// How many rows the view is scrolled into scrollback. 0 = live bottom.
+    scroll_offset: usize,
 }
+
+/// Approximate cell line height for turning pixel scroll deltas into rows.
+/// Keep in sync with the renderer's LINE_HEIGHT constant.
+const SCROLL_LINE_HEIGHT: f64 = 22.0;
 
 impl PurrttyApp {
     fn with_proxy(proxy: EventLoopProxy<UserEvent>) -> Self {
@@ -169,17 +175,48 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                         return;
                     }
                 };
-                if let Err(err) = renderer.render(guard.grid()) {
+                if let Err(err) = renderer.render(guard.grid(), self.scroll_offset) {
                     warn!(?err, "render failed");
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some(bytes) = key_event_to_bytes(&event) {
+                    // Any real input snaps the view back to the live bottom.
+                    if self.scroll_offset != 0 {
+                        self.scroll_offset = 0;
+                        self.redraw();
+                    }
                     if let Some(pty) = self.pty.as_mut() {
                         if let Err(err) = pty.write(&bytes) {
                             warn!(?err, "pty write failed");
                         }
                     }
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y / SCROLL_LINE_HEIGHT,
+                };
+                if lines == 0.0 {
+                    return;
+                }
+                let max = self
+                    .terminal
+                    .as_ref()
+                    .and_then(|t| t.lock().ok().map(|g| g.grid().scrollback_len()))
+                    .unwrap_or(0);
+                // Positive y = scroll up = show older content = larger offset.
+                let delta_rows = lines.round() as i32;
+                let new_offset = if delta_rows > 0 {
+                    (self.scroll_offset + delta_rows as usize).min(max)
+                } else {
+                    self.scroll_offset
+                        .saturating_sub((-delta_rows) as usize)
+                };
+                if new_offset != self.scroll_offset {
+                    self.scroll_offset = new_offset;
+                    self.redraw();
                 }
             }
             _ => {}

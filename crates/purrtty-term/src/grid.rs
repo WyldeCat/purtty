@@ -92,6 +92,36 @@ impl Grid {
         self.cells.chunks(cols)
     }
 
+    /// Resolve a visible-view row index to the backing row slice, honoring
+    /// a scrollback offset.
+    ///
+    /// `view_idx` is in `[0, rows)`, top-to-bottom within the visible window.
+    /// `scroll_offset` is the number of rows the view has been scrolled into
+    /// scrollback — `0` is the live bottom, `scrollback_len()` is as far up
+    /// as we can go.
+    ///
+    /// Scrollback rows may have a different column count than the current
+    /// grid if a resize happened while they were in history. Callers should
+    /// tolerate a row shorter or longer than `self.cols()`.
+    pub fn row_at(&self, view_idx: usize, scroll_offset: usize) -> Option<&[Cell]> {
+        if view_idx >= self.size.rows {
+            return None;
+        }
+        let sb_len = self.scrollback.len();
+        let offset = scroll_offset.min(sb_len);
+        // Stream position: scrollback (older) followed by live rows (newer).
+        // The view's top is at stream index `sb_len - offset`.
+        let abs = (sb_len - offset) + view_idx;
+        if abs < sb_len {
+            self.scrollback.get(abs).map(|v| v.as_slice())
+        } else {
+            let r = abs - sb_len;
+            let start = r * self.size.cols;
+            let end = start + self.size.cols;
+            Some(&self.cells[start..end])
+        }
+    }
+
     // ---------- mutations ----------
 
     /// Drop all cells and reset the cursor. Scrollback is preserved.
