@@ -8,3 +8,5 @@ description = "Terminal grid model and VT/xterm parser for purrtty"
 
 [dependencies]
 thiserror = { workspace = true }
+vte = "0.13"
+bitflags = "2"

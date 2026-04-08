@@ -1,18 +1,16 @@
 //! purrtty-pty — PTY session management.
 //!
 //! Spawns the user's shell, owns the reader/writer handles, and feeds
-//! bytes into a VT parser that mutates a `purrtty_term::Grid`.
+//! bytes into a `purrtty_term::Terminal` whose grid it mutates.
 //!
-//! M0: stubs only. Real PTY lands in M3.
+//! M0-M2: stub only. Real PTY lands in M3.
 
 #![forbid(unsafe_code)]
-
-use purrtty_term::Grid;
 
 /// Placeholder PTY session. Will wrap a `portable_pty::PtyPair` in M3.
 #[derive(Debug, Default)]
 pub struct PtySession {
-    _grid: Grid,
+    _private: (),
 }
 
 impl PtySession {
