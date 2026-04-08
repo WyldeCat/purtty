@@ -1,8 +1,8 @@
-//! purtty-term — terminal grid model and VT parser.
+//! purrtty-term — terminal grid model and VT parser.
 //!
 //! This crate is pure domain logic: no GPU, no windowing, no PTY I/O.
-//! It can be unit-tested in isolation. The `purtty-ui` crate reads
-//! from a [`Grid`] to render, and `purtty-pty` feeds bytes into a
+//! It can be unit-tested in isolation. The `purrtty-ui` crate reads
+//! from a [`Grid`] to render, and `purrtty-pty` feeds bytes into a
 //! parser that mutates a [`Grid`].
 //!
 //! M0: stubs only. Real model lands in M2.

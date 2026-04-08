@@ -1,4 +1,4 @@
-//! purtty — binary entry point.
+//! purrtty — binary entry point.
 //!
 //! M1: opens a winit window, initializes a wgpu surface, and renders
 //! a fixed greeting via glyphon. Closing the window exits the app.
@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use purtty_ui::Renderer;
+use purrtty_ui::Renderer;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use winit::application::ApplicationHandler;
@@ -29,7 +29,7 @@ impl ApplicationHandler for PurttyApp {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("purtty")
+            .with_title("purrtty")
             .with_inner_size(winit::dpi::LogicalSize::new(960.0, 600.0));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -95,7 +95,7 @@ impl ApplicationHandler for PurttyApp {
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,purtty=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,purrtty=debug"));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -104,7 +104,7 @@ fn init_tracing() {
 
 fn main() -> Result<()> {
     init_tracing();
-    info!(version = env!("CARGO_PKG_VERSION"), "starting purtty");
+    info!(version = env!("CARGO_PKG_VERSION"), "starting purrtty");
 
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);

@@ -1,24 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/purtty-term",
-    "crates/purtty-pty",
-    "crates/purtty-ui",
-    "crates/purtty-app",
+    "crates/purrtty-term",
+    "crates/purrtty-pty",
+    "crates/purrtty-ui",
+    "crates/purrtty-app",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/wyldecat/purtty"
+repository = "https://github.com/wyldecat/purrtty"
 rust-version = "1.80"
 
 [workspace.dependencies]
 # Internal crates
-purtty-term = { path = "crates/purtty-term" }
-purtty-pty = { path = "crates/purtty-pty" }
-purtty-ui = { path = "crates/purtty-ui" }
+purrtty-term = { path = "crates/purrtty-term" }
+purrtty-pty = { path = "crates/purrtty-pty" }
+purrtty-ui = { path = "crates/purrtty-ui" }
 
 # Error / logging
 anyhow = "1"

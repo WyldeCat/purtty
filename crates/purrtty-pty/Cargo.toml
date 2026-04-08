@@ -1,17 +1,12 @@
 [package]
-name = "purtty-ui"
+name = "purrtty-pty"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "wgpu renderer and input for purtty"
+description = "PTY spawning and I/O for purrtty"
 
 [dependencies]
-purtty-term = { workspace = true }
+purrtty-term = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-winit = { workspace = true }
-
-wgpu = "22"
-glyphon = "0.6"
-pollster = "0.3"

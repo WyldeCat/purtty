@@ -1,10 +1,10 @@
 [package]
-name = "purtty-term"
+name = "purrtty-term"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Terminal grid model and VT/xterm parser for purtty"
+description = "Terminal grid model and VT/xterm parser for purrtty"
 
 [dependencies]
 thiserror = { workspace = true }

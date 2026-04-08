@@ -1,4 +1,4 @@
-# purtty
+# purrtty
 
 A Warp-inspired, GPU-accelerated terminal emulator for macOS. Written in Rust.
 
@@ -18,10 +18,10 @@ See [docs/plan.md](docs/plan.md) for the full plan.
 
 ```
 crates/
-  purtty-term/    pure domain — grid, cells, VT parser
-  purtty-pty/     PTY spawn + IO
-  purtty-ui/      wgpu renderer + input
-  purtty-app/     winit event loop, binary
+  purrtty-term/    pure domain — grid, cells, VT parser
+  purrtty-pty/     PTY spawn + IO
+  purrtty-ui/      wgpu renderer + input
+  purrtty-app/     winit event loop, binary
 ```
 
 ## Build & Run
@@ -29,7 +29,7 @@ crates/
 Requires Rust stable (see `rust-toolchain.toml`).
 
 ```sh
-cargo run -p purtty-app
+cargo run -p purrtty-app
 ```
 
 ## License

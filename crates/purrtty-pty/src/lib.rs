@@ -1,13 +1,13 @@
-//! purtty-pty — PTY session management.
+//! purrtty-pty — PTY session management.
 //!
 //! Spawns the user's shell, owns the reader/writer handles, and feeds
-//! bytes into a VT parser that mutates a `purtty_term::Grid`.
+//! bytes into a VT parser that mutates a `purrtty_term::Grid`.
 //!
 //! M0: stubs only. Real PTY lands in M3.
 
 #![forbid(unsafe_code)]
 
-use purtty_term::Grid;
+use purrtty_term::Grid;
 
 /// Placeholder PTY session. Will wrap a `portable_pty::PtyPair` in M3.
 #[derive(Debug, Default)]

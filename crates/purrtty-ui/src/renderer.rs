@@ -90,7 +90,7 @@ impl Renderer {
         buffer.set_size(&mut font_system, Some(width as f32), Some(height as f32));
         buffer.set_text(
             &mut font_system,
-            "hello purtty",
+            "hello purrtty",
             Attrs::new().family(Family::Monospace),
             Shaping::Advanced,
         );
@@ -168,12 +168,12 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("purtty.encoder"),
+                label: Some("purrtty.encoder"),
             });
 
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("purtty.main"),
+                label: Some("purrtty.main"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,

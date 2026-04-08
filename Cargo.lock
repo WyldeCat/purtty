@@ -1442,42 +1442,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 
 [[package]]
-name = "purtty-app"
+name = "purrtty-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "purtty-pty",
- "purtty-term",
- "purtty-ui",
+ "purrtty-pty",
+ "purrtty-term",
+ "purrtty-ui",
  "tracing",
  "tracing-subscriber",
  "winit",
 ]
 
 [[package]]
-name = "purtty-pty"
+name = "purrtty-pty"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "purtty-term",
+ "purrtty-term",
  "tracing",
 ]
 
 [[package]]
-name = "purtty-term"
+name = "purrtty-term"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
-name = "purtty-ui"
+name = "purrtty-ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "glyphon",
  "pollster",
- "purtty-term",
+ "purrtty-term",
  "tracing",
  "wgpu",
  "winit",

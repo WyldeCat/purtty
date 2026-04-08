@@ -1,20 +1,20 @@
 [package]
-name = "purtty-app"
+name = "purrtty-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "purtty — GPU-accelerated terminal emulator"
-default-run = "purtty"
+description = "purrtty — GPU-accelerated terminal emulator"
+default-run = "purrtty"
 
 [[bin]]
-name = "purtty"
+name = "purrtty"
 path = "src/main.rs"
 
 [dependencies]
-purtty-term = { workspace = true }
-purtty-pty = { workspace = true }
-purtty-ui = { workspace = true }
+purrtty-term = { workspace = true }
+purrtty-pty = { workspace = true }
+purrtty-ui = { workspace = true }
 
 anyhow = { workspace = true }
 tracing = { workspace = true }
