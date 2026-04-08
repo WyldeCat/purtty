@@ -168,6 +168,43 @@ purrtty/
 
 전반적으로 v0.1 은 **통합 테스트보다 수동 스모크 + term 크레이트 유닛 테스트**에 의존. `term/` 이 순수 로직이라 테스트 커버리지 집중 지점.
 
+## Known Issues (to fix before v0.1 ships)
+
+Bugs surfaced during QA of in-progress milestones that are deferred to
+a later milestone in the same release cycle.
+
+### M3 → M4
+
+- **Wide-char visual misalignment.** `Grid::put_char` tracks CJK/emoji
+  glyphs as 2 cells (fixed in 497b233), so logical operations like
+  backspace are correct. But the current renderer feeds one big string
+  into cosmic-text and trusts its proportional layout, so a Korean glyph
+  occupies the font's actual advance width (~1.5–2× Latin advance)
+  rather than exactly 2 × `CELL_WIDTH`. Latin and CJK drift apart
+  across a line. Fix in M4 by switching to per-cell positioning: emit
+  each cell at `col * CELL_WIDTH` instead of relying on text flow.
+
+- **No visible cursor.** The grid tracks `Cursor { row, col }` but the
+  renderer draws nothing at that position. M4 adds a block/underline
+  cursor (with blink) rendered as a wgpu quad behind/under the cell
+  glyph.
+
+- **All text is monochrome.** SGR color/attribute state is stored per
+  cell but the renderer draws everything at a single default color.
+  M4 turns `Cell.fg/bg/attrs` into per-glyph `glyphon::Color` + a
+  separate background-quad pass.
+
+- **Ctrl / modifier key combos unverified.** Ctrl+C, Ctrl+D, Ctrl+L
+  etc. may or may not work depending on whether winit populates
+  `KeyEvent.text` with the control byte on macOS. M4 should handle
+  modifiers explicitly (read `ModifiersState`, convert Ctrl+letter to
+  bytes 0x01–0x1A).
+
+- **No Korean IME composition.** Single code points go through fine
+  (wide-char fix above) but the preedit / commit dance from macOS IME
+  isn't wired up. M4 or M5 depending on complexity — winit emits
+  `WindowEvent::Ime` events we can forward.
+
 ## Out of Scope for v0.1 (v2+ Backlog)
 
 - Block 기반 커맨드 모델 (Warp 시그니처)
