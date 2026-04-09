@@ -3,6 +3,8 @@
 //! [`Terminal`] owns both a grid and a parser. Feed it bytes via
 //! [`Terminal::advance`] and the grid mutates in place.
 
+use std::path::PathBuf;
+
 use vte::{Params, Parser, Perform};
 
 use crate::grid::Grid;
@@ -181,8 +183,17 @@ impl Perform for GridPerformer<'_> {
         }
     }
 
-    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {
-        // Title sets (0/1/2) and friends are accepted silently for now.
+    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+        // OSC 7: current working directory — `\e]7;file://host/path\a`
+        // vte splits on `;`, so params[0] == b"7" and params[1] == the URL.
+        if params.first() == Some(&&b"7"[..]) {
+            if let Some(url) = params.get(1) {
+                if let Some(path) = parse_osc7_url(url) {
+                    self.grid.set_cwd(path);
+                }
+            }
+        }
+        // OSC 0/1/2 (title) and others: accepted silently.
     }
 }
 
@@ -204,6 +215,37 @@ impl GridPerformer<'_> {
             _ => {}
         }
     }
+}
+
+/// Parse an OSC 7 file URL into a local filesystem path.
+///
+/// Expected format: `file://hostname/path` or `file:///path`. The
+/// hostname is ignored (it's always the local machine in practice).
+/// Percent-encoded bytes (`%XX`) are decoded.
+fn parse_osc7_url(raw: &[u8]) -> Option<PathBuf> {
+    let s = std::str::from_utf8(raw).ok()?;
+    let rest = s.strip_prefix("file://")?;
+    // Skip hostname: everything up to the next `/`.
+    let path_start = rest.find('/')?;
+    let encoded = &rest[path_start..];
+    Some(PathBuf::from(percent_decode(encoded)))
+}
+
+fn percent_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hi = bytes.next().and_then(|c| (c as char).to_digit(16));
+            let lo = bytes.next().and_then(|c| (c as char).to_digit(16));
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8 as char);
+            }
+        } else {
+            out.push(b as char);
+        }
+    }
+    out
 }
 
 /// Extract the first parameter, applying a default if missing **or** 0.

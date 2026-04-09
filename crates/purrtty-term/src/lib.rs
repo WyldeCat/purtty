@@ -318,6 +318,26 @@ mod tests {
     }
 
     #[test]
+    fn osc7_sets_grid_cwd() {
+        let mut t = Terminal::new(2, 10);
+        t.advance_str("\x1b]7;file://localhost/Users/foo/bar\x07");
+        assert_eq!(
+            t.grid().cwd(),
+            Some(std::path::Path::new("/Users/foo/bar"))
+        );
+    }
+
+    #[test]
+    fn osc7_percent_decodes_path() {
+        let mut t = Terminal::new(2, 10);
+        t.advance_str("\x1b]7;file:///tmp/my%20dir\x07");
+        assert_eq!(
+            t.grid().cwd(),
+            Some(std::path::Path::new("/tmp/my dir"))
+        );
+    }
+
+    #[test]
     fn reverse_index_at_top_scrolls_down() {
         let mut t = Terminal::new(3, 3);
         t.advance_str("aaa\r\nbbb\r\nccc\x1b[1;1H");

@@ -9,10 +9,12 @@
 
 #![forbid(unsafe_code)]
 
+mod agent;
 mod config;
 
 use std::sync::{Arc, Mutex};
 
+use agent::AgentSession;
 use config::Config;
 
 use anyhow::Result;
@@ -28,10 +30,30 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// Events posted to the winit loop from background threads.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum UserEvent {
-    /// Bytes arrived from the PTY; redraw is needed.
+    /// Bytes arrived from the PTY or agent; redraw is needed.
     PtyDataArrived,
+    /// The Claude agent process exited.
+    AgentFinished { exit_code: i32 },
+}
+
+/// Keyboard input routing state.
+enum InputMode {
+    /// Normal shell interaction — keys go to the PTY.
+    Normal,
+    /// User is composing an agent prompt (triggered by `>`). Keys are
+    /// buffered locally and echoed to the grid; the shell sees nothing.
+    AgentInput { buffer: String },
+    /// An agent process is running. All keyboard input is swallowed
+    /// except Ctrl+C which kills the agent.
+    AgentRunning,
+}
+
+impl Default for InputMode {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 type SharedTerminal = Arc<Mutex<Terminal>>;
@@ -50,6 +72,14 @@ struct PurrttyApp {
     modifiers: ModifiersState,
     /// Loaded user config — used to seed the window and the renderer.
     config: Config,
+    /// Agent input mode state machine.
+    input_mode: InputMode,
+    /// Heuristic: true after we forward Enter to the PTY (shell will
+    /// re-emit a prompt), false after forwarding any other key. Used to
+    /// detect "user is at the start of a fresh prompt line".
+    shell_input_empty: bool,
+    /// Handle to a running agent child process (if any).
+    agent_session: Option<AgentSession>,
 }
 
 /// Approximate cell line height for turning pixel scroll deltas into rows.
@@ -61,6 +91,8 @@ impl PurrttyApp {
         Self {
             proxy: Some(proxy),
             config,
+            // Start true so the very first `>` at the initial prompt works.
+            shell_input_empty: true,
             ..Self::default()
         }
     }
@@ -68,6 +100,161 @@ impl PurrttyApp {
     fn redraw(&self) {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
+        }
+    }
+
+    fn handle_keyboard_input(&mut self, event: &KeyEvent) {
+        match &mut self.input_mode {
+            InputMode::Normal => self.handle_normal_input(event),
+            InputMode::AgentInput { .. } => self.handle_agent_input(event),
+            InputMode::AgentRunning => {
+                // Ctrl+C kills the running agent.
+                if let Some(bytes) = key_event_to_bytes(event, self.modifiers) {
+                    if bytes == [0x03] {
+                        // Ctrl+C
+                        if let Some(session) = self.agent_session.as_mut() {
+                            session.kill();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_normal_input(&mut self, event: &KeyEvent) {
+        let Some(bytes) = key_event_to_bytes(event, self.modifiers) else {
+            return;
+        };
+
+        // Detect `>` at the start of empty shell input → agent mode.
+        if bytes == b">" && self.shell_input_empty {
+            self.input_mode = InputMode::AgentInput {
+                buffer: String::new(),
+            };
+            // Echo a bold-cyan `> ` marker into the terminal grid.
+            self.echo_to_terminal(b"\x1b[1;36m> \x1b[0m");
+            self.redraw();
+            return;
+        }
+
+        // Snap scrollback view to the live bottom on any input.
+        if self.scroll_offset != 0 {
+            self.scroll_offset = 0;
+            self.redraw();
+        }
+
+        // Track the heuristic for "shell is at empty input".
+        if bytes == b"\r" {
+            self.shell_input_empty = true;
+        } else {
+            self.shell_input_empty = false;
+        }
+
+        // Forward to the PTY.
+        if let Some(pty) = self.pty.as_mut() {
+            if let Err(err) = pty.write(&bytes) {
+                warn!(?err, "pty write failed");
+            }
+        }
+    }
+
+    fn handle_agent_input(&mut self, event: &KeyEvent) {
+        if event.state != ElementState::Pressed {
+            return;
+        }
+
+        // Esc → cancel agent input, erase the echoed line.
+        if event.logical_key == Key::Named(NamedKey::Escape) {
+            self.echo_to_terminal(b"\r\x1b[2K"); // CR + erase line
+            self.input_mode = InputMode::Normal;
+            self.redraw();
+            return;
+        }
+
+        // Enter → launch the agent.
+        if event.logical_key == Key::Named(NamedKey::Enter) {
+            let buffer = match std::mem::take(&mut self.input_mode) {
+                InputMode::AgentInput { buffer } => buffer,
+                _ => unreachable!(),
+            };
+            if buffer.trim().is_empty() {
+                self.echo_to_terminal(b"\r\x1b[2K");
+                self.input_mode = InputMode::Normal;
+                self.redraw();
+                return;
+            }
+            self.echo_to_terminal(b"\r\n");
+            self.input_mode = InputMode::AgentRunning;
+            self.spawn_agent(buffer);
+            return;
+        }
+
+        // Backspace → remove last char from buffer + visual erase.
+        if event.logical_key == Key::Named(NamedKey::Backspace) {
+            if let InputMode::AgentInput { buffer } = &mut self.input_mode {
+                if buffer.pop().is_some() {
+                    self.echo_to_terminal(b"\x08 \x08");
+                    self.redraw();
+                }
+            }
+            return;
+        }
+
+        // Printable text → append to buffer + echo.
+        if let Some(text) = &event.text {
+            if !text.is_empty() {
+                if let InputMode::AgentInput { buffer } = &mut self.input_mode {
+                    buffer.push_str(text.as_str());
+                    self.echo_to_terminal(text.as_bytes());
+                    self.redraw();
+                }
+            }
+        }
+    }
+
+    fn echo_to_terminal(&self, bytes: &[u8]) {
+        if let Some(terminal) = self.terminal.as_ref() {
+            if let Ok(mut term) = terminal.lock() {
+                term.advance(bytes);
+            }
+        }
+    }
+
+    fn spawn_agent(&mut self, prompt: String) {
+        let cwd = self
+            .terminal
+            .as_ref()
+            .and_then(|t| t.lock().ok().and_then(|g| g.grid().cwd().map(|p| p.to_path_buf())))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+        let terminal_for_agent = self.terminal.clone().unwrap();
+        let proxy = self.proxy.clone().unwrap();
+
+        let proxy_for_exit = proxy.clone();
+        match AgentSession::spawn(
+            &prompt,
+            &cwd,
+            move |bytes| {
+                if let Ok(mut term) = terminal_for_agent.lock() {
+                    term.advance(bytes);
+                }
+                let _ = proxy.send_event(UserEvent::PtyDataArrived);
+            },
+            move |exit_code| {
+                let _ = proxy_for_exit.send_event(UserEvent::AgentFinished { exit_code });
+            },
+        ) {
+            Ok(session) => {
+                info!(?cwd, "agent spawned");
+                self.agent_session = Some(session);
+            }
+            Err(err) => {
+                error!(?err, "failed to spawn agent");
+                let msg = format!("\x1b[1;31m✗ failed to spawn claude: {err}\x1b[0m\r\n");
+                self.echo_to_terminal(msg.as_bytes());
+                self.input_mode = InputMode::Normal;
+                self.redraw();
+            }
         }
     }
 }
@@ -144,6 +331,23 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::PtyDataArrived => self.redraw(),
+            UserEvent::AgentFinished { exit_code } => {
+                info!(exit_code, "agent finished");
+                self.input_mode = InputMode::Normal;
+                self.agent_session = None;
+                // Print a status marker into the terminal grid.
+                let marker = if exit_code == 0 {
+                    "\r\n\x1b[1;32m✓ agent done\x1b[0m\r\n"
+                } else {
+                    "\r\n\x1b[1;31m✗ agent failed\x1b[0m\r\n"
+                };
+                if let Some(terminal) = self.terminal.as_ref() {
+                    if let Ok(mut term) = terminal.lock() {
+                        term.advance(marker.as_bytes());
+                    }
+                }
+                self.redraw();
+            }
         }
     }
 
@@ -217,18 +421,7 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(bytes) = key_event_to_bytes(&event, self.modifiers) {
-                    // Any real input snaps the view back to the live bottom.
-                    if self.scroll_offset != 0 {
-                        self.scroll_offset = 0;
-                        self.redraw();
-                    }
-                    if let Some(pty) = self.pty.as_mut() {
-                        if let Err(err) = pty.write(&bytes) {
-                            warn!(?err, "pty write failed");
-                        }
-                    }
-                }
+                self.handle_keyboard_input(&event);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {

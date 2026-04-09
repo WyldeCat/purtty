@@ -7,6 +7,7 @@
 //! to it.
 
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 
 use unicode_width::UnicodeWidthChar;
 
@@ -80,6 +81,11 @@ pub struct Grid {
     /// mode; the primary buffer lives inside `primary_snapshot`.
     in_alt_screen: bool,
     primary_snapshot: Option<PrimarySnapshot>,
+
+    /// Shell's current working directory, parsed from OSC 7
+    /// (`\e]7;file://host/path\a`). `None` if no OSC 7 has been
+    /// received yet.
+    cwd: Option<PathBuf>,
 }
 
 impl Grid {
@@ -99,6 +105,7 @@ impl Grid {
             cursor_visible: true,
             in_alt_screen: false,
             primary_snapshot: None,
+            cwd: None,
         }
     }
 
@@ -138,6 +145,15 @@ impl Grid {
 
     pub fn is_alt_screen(&self) -> bool {
         self.in_alt_screen
+    }
+
+    /// Shell cwd as reported by OSC 7. `None` if no OSC 7 has been received.
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
+    }
+
+    pub fn set_cwd(&mut self, path: PathBuf) {
+        self.cwd = Some(path);
     }
 
     /// Borrow the cell at `(row, col)`. Panics if out of bounds — callers
