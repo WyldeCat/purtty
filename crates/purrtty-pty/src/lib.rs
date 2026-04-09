@@ -18,8 +18,7 @@ use tracing::{debug, warn};
 pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
-    // Kept to own the child process for the lifetime of the session.
-    _child: Box<dyn Child + Send + Sync>,
+    child: Box<dyn Child + Send + Sync>,
     _reader_thread: JoinHandle<()>,
 }
 
@@ -92,7 +91,7 @@ impl PtySession {
         Ok(Self {
             master: pair.master,
             writer,
-            _child: child,
+            child,
             _reader_thread: reader_thread,
         })
     }
@@ -104,6 +103,11 @@ impl PtySession {
             .context("write to pty master")?;
         self.writer.flush().context("flush pty master")?;
         Ok(())
+    }
+
+    /// The child shell's process ID, if available.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.process_id()
     }
 
     /// Tell the PTY about a new window size (in cells).

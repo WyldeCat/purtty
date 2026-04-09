@@ -231,10 +231,17 @@ impl PurrttyApp {
     }
 
     fn spawn_agent(&mut self, prompt: String) {
+        // Try OSC 7 first, then lsof on the shell PID, then purrtty's own cwd.
         let cwd = self
             .terminal
             .as_ref()
             .and_then(|t| t.lock().ok().and_then(|g| g.grid().cwd().map(|p| p.to_path_buf())))
+            .or_else(|| {
+                self.pty
+                    .as_ref()
+                    .and_then(|pty| pty.child_pid())
+                    .and_then(shell_cwd_via_lsof)
+            })
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
         let terminal_for_agent = self.terminal.clone().unwrap();
@@ -351,11 +358,14 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                 } else {
                     "\r\n\x1b[1;31m✗ agent failed\x1b[0m\r\n"
                 };
-                if let Some(terminal) = self.terminal.as_ref() {
-                    if let Ok(mut term) = terminal.lock() {
-                        term.advance(marker.as_bytes());
-                    }
+                self.echo_to_terminal(marker.as_bytes());
+                // Nudge the shell to re-display its prompt by sending
+                // a newline. The shell sees an empty command and just
+                // prints a fresh prompt.
+                if let Some(pty) = self.pty.as_mut() {
+                    let _ = pty.write(b"\n");
                 }
+                self.shell_input_empty = true;
                 self.redraw();
             }
         }
@@ -548,6 +558,22 @@ fn key_event_to_bytes(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>>
     }
 
     event.text.as_ref().map(|t| t.as_bytes().to_vec())
+}
+
+/// Query the working directory of a process via `lsof` (macOS).
+/// Returns `None` if lsof isn't available or the PID doesn't exist.
+fn shell_cwd_via_lsof(pid: u32) -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("lsof")
+        .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&output.stdout);
+    for line in s.lines() {
+        if let Some(path) = line.strip_prefix('n') {
+            return Some(std::path::PathBuf::from(path));
+        }
+    }
+    None
 }
 
 fn init_tracing() {
