@@ -112,7 +112,7 @@ drawn at a fixed position, resize and HiDPI handling. Shipped:
 > gap is closed in **M3.5** below rather than by retroactively
 > expanding M2.
 
-### M3 🚧 PTY + Shell (basic integration)
+### M3 ✅ PTY + Shell (basic integration)
 `purrtty-pty::PtySession` opens a PTY, spawns `$SHELL` (fallback
 `/bin/zsh`) with `TERM=xterm-256color`/`COLORTERM=truecolor`, runs a
 background reader thread that calls a caller-supplied callback, and
@@ -130,26 +130,19 @@ Renderer updated to take `&Grid` and build the frame text by walking
 `row_at(view_idx, scroll_offset)`, skipping `WIDE_CONT` cells. Wrap
 disabled on the glyphon buffer so grid rows map 1:1 to visual lines.
 
-**Bonus (originally M4-ish territory):** scrollback view with
-mouse-wheel scrolling and snap-back on keyboard input.
+**Bonus delivered as part of M3:** scrollback view with mouse-wheel
+scrolling, snap-back on keyboard input, wide-char width tracking
+fix for Korean input.
 
-**What works now:** zsh prompt, typing (incl. space), simple commands
-(`ls`, `pwd`, `echo`, `cat`), long output + wheel scroll, Korean input
-preserving prompt integrity (logical widths), resize.
+Shipped: `35d560e` (wiring), `75af0a2` (space + wrap), `dba895c`
+(scrollback), `497b233` (wide chars).
 
-**What's broken:** vim, htop, less, and anything else that uses
-IL/DL/scroll-region/alt-screen — handled in M3.5. Color, cursor, Ctrl
-combos, and IME stay for M4.
-
-Shipped so far: `35d560e` (wiring), `75af0a2` (space + wrap),
-`dba895c` (scrollback), `497b233` (wide chars).
-
-### M3.5 🔜 VT coverage expansion (vim / htop hardening)
-Close the gap between M2's explicit VT scope and M3's vim/htop
+### M3.5 ✅ VT coverage expansion (vim / htop hardening)
+Closed the gap between M2's explicit VT scope and M3's vim/htop
 verification criterion. Additive to `purrtty-term`, no API changes
-above it.
+above it. Shipped: `153f0ad`.
 
-**CSI handlers to add:**
+**CSI handlers added:**
 - Cursor motion: `A`/`B`/`C`/`D` (CUU/CUD/CUF/CUB), `G` (CHA),
   `d` (VPA)
 - Line ops: `L` (IL), `M` (DL), `S` (SU), `T` (SD)
@@ -188,54 +181,88 @@ above it.
   shell intact), `htop` (live refresh without artifacts), `less`
   (pgup/pgdn), `tmux` (enter/exit alt screen cleanly)
 
-### M4 🔜 UI polish
-- **Per-cell positioning.** Render each cell at `(col * cell_w,
-  row * line_h)` instead of relying on cosmic-text flow. Fixes the
-  wide-char visual drift and enables exact colored backgrounds.
-- **Real monospace metrics.** Measure a reference glyph ("M") via
-  cosmic-text instead of the hard-coded `CELL_WIDTH = 10.0`.
-- **SGR → pixels.** Per-glyph `glyphon::Color` from `Cell.fg` + a
-  wgpu quad pass for `Cell.bg` + attrs (bold via font weight,
-  reverse by swapping fg/bg, underline/strike as extra quads).
-- **Cursor rendering.** Block and underline styles, blink timer
-  driven by winit `set_wait_timeout`, honor the DEC 25 visibility
-  flag from M3.5.
-- **Modifier keys.** Track `ModifiersState`, map Ctrl+letter →
-  `0x01–0x1A`, Ctrl+[/Ctrl+] → `\x1b`/`\x1d`, Alt+letter → ESC +
-  letter. Cmd-based shortcuts (Cmd+C/V/+/-) handled in app before
-  reaching pty.
-- **IME composition.** Forward `WindowEvent::Ime` preedit to a
-  temporary overlay; commit inserts bytes via pty.
+### M4 🚧 UI polish (mostly done)
 
-**Performance.** Current M3-era renderer rebuilds one giant string
-from the whole grid on every frame and hands it to cosmic-text,
-which re-shapes the entire paragraph from scratch. At larger window
-sizes this is visibly laggy. Per-cell positioning (above) removes
-the need to go through cosmic-text's paragraph layout at all, which
-unlocks the following optimizations — **target ≥60 fps at
-200×60 cells on a Retina display**:
+After researching how Alacritty / WezTerm / Contour / cosmic-term
+actually render text (see [`docs/perf.md`](perf.md)), the original
+M4 plan was rewritten around cosmic-term's pattern: a single
+`glyphon::Buffer` with per-line `set_text` + `AttrsList`, instead of
+the per-row Buffer + content-hash cache that the very first M4 stage
+shipped. The discarded approach is preserved in commit `c42f707` for
+history.
 
-- **Dirty tracking.** Grid marks rows as dirty on mutation; the
-  renderer only re-shapes and re-uploads those rows. Scroll is a
-  bulk dirty (all rows). Adds `dirty: Vec<bool>` or a row-generation
-  counter to `Grid`.
-- **ASCII fast path.** For cells with width 1 and an ASCII code
-  point, skip cosmic-text shaping and use a pre-built glyph atlas
-  (cached by `(char, font, weight, italic)`). Fall back to full
-  shaping for non-ASCII and wide glyphs.
-- **Row-level shaping cache.** Keep a per-row shaped buffer keyed
-  by row content hash; invalidate only when the row changes.
-- **Redraw coalescing.** PTY reader currently wakes the UI on
-  every chunk. Debounce with a winit `ControlFlow::WaitUntil` +
-  "dirty since last paint" flag so we cap at ~60 Hz even if the
-  shell is spewing output at MB/s.
-- **Off-screen culling.** While the view is scrolled into
-  scrollback, live-grid mutations still cause a full repaint. Skip
-  redraw entirely when `scroll_offset > 0` and nothing in the
-  visible slice changed (use the row-generation counter to check).
-- **Atlas pressure.** `atlas.trim()` is called every frame today;
-  move it to "every N frames" or "on atlas near-full" to cut down
-  CPU work in the common case.
+#### Stage 1' ✅ — single Buffer + per-line set_text
+Shipped: `82cdc4f`. Replaces `c42f707`.
+- One `glyphon::Buffer` covers the whole grid; one `BufferLine` per
+  visible row.
+- Per frame: hash each visible row, call
+  `buffer.lines[i].set_text(text, LineEnding::default(), attrs_list)`
+  only on mismatches. cosmic-text tracks per-line shaping internally
+  so untouched lines aren't re-shaped.
+- One `shape_until_scroll` and one `TextRenderer::prepare` per frame.
+- Per-glyph foreground colors flow through the same call as the
+  text via `AttrsList`, with run compaction across cells with
+  identical fg/attrs.
+
+#### Stage 2 ✅ — backgrounds, cursor, reverse video, measured metrics
+Shipped: `e9989ee`.
+- **Measured monospace cell width** at startup by shaping
+  `"MMMMMMMMMM"` and dividing the layout width by 10. Drops the
+  hard-coded `CELL_WIDTH = 10.0`.
+- **`crates/purrtty-ui/src/quad.rs`** — small shared wgpu pipeline
+  with two independent vertex layers (bg and overlay).
+- **Cell backgrounds** as solid quads under the text pass; wide
+  glyphs span 2 × cell_width.
+- **Reverse video** (SGR 7) resolved as a fg/bg swap in
+  `cell_colors`; the AttrsList color path and the bg quad path
+  consume the swapped values.
+- **Block cursor** as a translucent overlay quad (alpha 0.4) drawn
+  after text, only when `Grid::cursor_visible()` is true and the
+  view is at the live bottom.
+- Render order: clear → bg quads → glyphon text → overlay (cursor)
+  quads.
+
+#### Stage 3 ✅ — modifier keys + IME commit
+Shipped: `4a781c7`.
+- Track `ModifiersState` from `WindowEvent::ModifiersChanged`.
+- **Cmd / Super** swallowed at the app layer (never reaches PTY).
+- **Ctrl + letter** → ASCII control byte (`0x01..0x1A`); plus
+  `Ctrl+[`=ESC, `Ctrl+\\`=FS, `Ctrl+]`=GS, `Ctrl+^`=RS, `Ctrl+_`=US,
+  `Ctrl+?`=DEL, `Ctrl+@`/`Ctrl+Space`=NUL.
+- **Alt + char** → ESC prefix + char (xterm meta convention).
+- **IME**: `set_ime_allowed(true)` + `WindowEvent::Ime(Commit)`
+  forwards committed text to the PTY. Korean composition delivered
+  as ordinary UTF-8 bytes once Enter is pressed in the IME.
+
+#### Stage 4 ⏸ — deferred (only if measurements demand it)
+
+Stages 1' + 2 already match cosmic-term's pattern, which is
+documented to hit Alacritty-class performance. QA at the end of
+stage 3 didn't surface any remaining lag, so the original Stage 4
+items are deferred to v0.2 (or skipped entirely):
+
+- **ASCII fast path** that bypasses cosmic-text shaping for
+  width-1 ASCII cells via a pre-built glyph atlas.
+- **Redraw coalescing** for PTY storms — winit currently coalesces
+  redraw requests automatically, so unproven necessary.
+- **Off-screen culling** when `scroll_offset > 0`.
+- **Atlas trim throttling.**
+
+Reactivate this stage if profiling on a real workload (e.g.
+`yes | head -1000000`) shows headroom problems on a 200×60 grid.
+
+#### M4 follow-ups still open (not blocking v0.1)
+
+- **IME preedit overlay.** `WindowEvent::Ime::Preedit` in-progress
+  composition isn't drawn — the user only sees committed text.
+  Wire to a transient overlay buffer.
+- **Cursor blink timer.** Cursor is currently always-on when
+  visible. Add a blink driven by winit `ControlFlow::WaitUntil`.
+- **Wide-char visual drift.** Logical fix is in M3 (`497b233`),
+  but cosmic-text's CJK advance is still the font's natural one,
+  not exactly 2 × cell_width. Needs per-cell positioning for an
+  exact fix.
+- **Cmd+C / Cmd+V** application-level copy/paste.
 
 ### M5 🔜 Polish & packaging
 - `~/.config/purrtty/config.toml` (font family/size, color scheme,
@@ -246,37 +273,42 @@ unlocks the following optimizations — **target ≥60 fps at
 - **v0.1 종료 조건**: 일상적인 쉘 작업 + vim + htop 을 purrtty만으로
   문제 없이 할 수 있다.
 
-## Critical Files (to be created)
+## Critical Files (current state)
 
 ```
 purrtty/
 ├── Cargo.toml                    # workspace
+├── Cargo.lock
 ├── rust-toolchain.toml
 ├── README.md
 ├── .gitignore
-├── crates/
-│   ├── purrtty-term/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── cell.rs           # Cell, Attrs, Color
-│   │       ├── grid.rs           # Grid + scrollback
-│   │       └── parser.rs         # vte::Perform impl
-│   ├── purrtty-pty/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs            # PtySession, reader/writer
-│   ├── purrtty-ui/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── renderer.rs       # wgpu device/surface
-│   │       ├── text.rs           # glyphon integration
-│   │       └── input.rs          # key → bytes
-│   └── purrtty-app/
-│       ├── Cargo.toml
-│       └── src/main.rs           # winit loop, wires everything
-└── config.example.toml
+├── docs/
+│   ├── plan.md                   # this file
+│   └── perf.md                   # rendering best-practice research
+└── crates/
+    ├── purrtty-term/             # pure domain — no GPU, no winit, no PTY
+    │   ├── Cargo.toml
+    │   └── src/
+    │       ├── lib.rs            # re-exports + 31 unit tests
+    │       ├── cell.rs           # Cell, Attrs (bitflags), Color, Pen
+    │       ├── grid.rs           # Grid + scrollback + scroll region + alt screen
+    │       └── parser.rs         # vte::Perform → Grid mutations
+    ├── purrtty-pty/
+    │   ├── Cargo.toml
+    │   └── src/lib.rs            # PtySession (portable-pty + reader thread)
+    ├── purrtty-ui/
+    │   ├── Cargo.toml
+    │   └── src/
+    │       ├── lib.rs
+    │       ├── renderer.rs       # wgpu surface + glyphon Buffer + per-line set_text
+    │       └── quad.rs           # solid-color quad pipeline for bg + cursor
+    └── purrtty-app/
+        ├── Cargo.toml
+        └── src/main.rs           # winit ApplicationHandler, glue, key mapping
 ```
+
+Not yet created (M5 territory): `~/.config/purrtty/config.toml`,
+color-scheme files, README screenshot, app bundle metadata.
 
 ## Verification (per milestone)
 
@@ -298,40 +330,34 @@ purrtty/
 Bugs surfaced during QA of a shipped or in-progress milestone, with
 the milestone they're slated to be fixed in.
 
-### Fix in M3.5 (VT hardening)
-- **vim / htop / less visibly broken.** Missing IL/DL, scroll region,
-  alt screen, and cursor save/restore sequences mean full-screen TUI
-  apps leave garbage on the screen, overwrite lines instead of
-  inserting, and don't restore the shell on exit. Full list of missing
-  sequences is in the M3.5 milestone section above.
+### Resolved in shipped commits
 
-### Fix in M4 (UI polish)
-- **Wide-char visual misalignment.** `Grid::put_char` tracks CJK/emoji
-  glyphs as 2 cells (logical fix in `497b233`), so backspace/erase
-  math is correct. The renderer still feeds one big string into
-  cosmic-text and trusts its proportional layout, so a Korean glyph
-  occupies the font's natural advance (~1.5–2× Latin) rather than
-  exactly 2 × `CELL_WIDTH`. Latin and CJK drift apart within a line.
-  Fix by switching to per-cell positioning in M4.
-- **No visible cursor.** `Cursor` is tracked but not drawn. M4 adds a
-  block/underline cursor with blink, honoring DEC mode 25 (which is
-  parsed in M3.5 but takes effect visually in M4).
-- **All text is monochrome.** SGR state is stored per cell but the
-  renderer draws everything at a single default color. M4 converts
-  `Cell.fg/bg/attrs` into per-glyph `glyphon::Color` + background
-  quad pass.
-- **Ctrl / modifier key combos unverified.** Ctrl+C, Ctrl+D, Ctrl+L
-  etc. rely on whether winit populates `KeyEvent.text` with the
-  control byte on macOS. M4 reads `ModifiersState` explicitly and
-  maps Ctrl+letter → `0x01–0x1A`.
-- **No Korean IME composition.** Single code points go through
-  (wide-char logical fix), but macOS IME preedit/commit isn't wired
-  up. M4 forwards `WindowEvent::Ime`.
-- **Render lag at large window sizes.** Every frame rebuilds the
-  whole grid text and re-shapes it via cosmic-text. Noticeable lag
-  when the window gets big. M4's per-cell positioning unlocks dirty
-  tracking, row-level shaping cache, ASCII fast path, and redraw
-  coalescing — see the **Performance** block inside M4.
+| Issue | Fixed in |
+|---|---|
+| vim / htop / less visibly broken (missing IL/DL, scroll region, alt screen, cursor save/restore) | M3.5 — `153f0ad` |
+| All text monochrome (no SGR colors rendered) | M4 stage 1' / 2 — `82cdc4f`, `e9989ee` |
+| No visible cursor | M4 stage 2 — `e9989ee` |
+| Render lag rebuilding whole-grid string per frame | M4 stage 1' — `82cdc4f` |
+| Ctrl / Alt modifier combos not handled | M4 stage 3 — `4a781c7` |
+| Korean IME commit not delivered to shell | M4 stage 3 — `4a781c7` |
+
+### Still open (M4 follow-ups, not blocking v0.1)
+
+- **Wide-char visual drift.** `Grid::put_char` correctly tracks
+  CJK/emoji as 2 cells (`497b233`), so logical operations like
+  backspace are sound. The renderer still leans on cosmic-text's
+  natural CJK advance for horizontal positioning, which doesn't
+  exactly equal 2 × measured `cell_width`. Latin and CJK drift
+  apart inside a single line. Real fix is per-cell glyph
+  positioning, deferred until v0.2.
+- **No IME preedit overlay.** Committed text from `Ime::Commit`
+  reaches the shell, but the in-progress composition (`Ime::Preedit`)
+  isn't drawn anywhere — the user only sees the final result.
+- **Cursor doesn't blink.** Block cursor is always-on when visible.
+  Needs a winit `ControlFlow::WaitUntil` blink timer.
+- **No Cmd+C / Cmd+V.** Cmd shortcuts are swallowed at the app
+  layer (so they don't pollute the shell), but copy/paste isn't
+  actually implemented.
 
 ## Out of Scope for v0.1 (v2+ Backlog)
 
