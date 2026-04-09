@@ -20,3 +20,20 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 winit = { workspace = true }
+
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+
+# Metadata used by `cargo bundle` to produce a macOS .app. Build with:
+#     cargo install cargo-bundle
+#     cargo bundle --release -p purrtty-app
+# The result lands in target/release/bundle/osx/.
+[package.metadata.bundle]
+name              = "purrtty"
+identifier        = "dev.wyldecat.purrtty"
+short_description = "GPU-accelerated terminal emulator"
+long_description  = "A Warp-inspired, GPU-accelerated terminal emulator for macOS, built on wgpu and cosmic-text."
+category          = "DeveloperTool"
+copyright         = "Copyright (c) 2026 WyldeCat"
+osx_minimum_system_version = "12.0"

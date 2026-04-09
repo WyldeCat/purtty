@@ -1,0 +1,24 @@
+# purrtty configuration.
+#
+# Copy this file to `~/.config/purrtty/config.toml` and tweak. Every
+# section is optional — missing values fall back to the defaults shown
+# below.
+
+[window]
+# Initial window size in logical (not physical) pixels.
+width  = 960
+height = 600
+
+[font]
+# Specific monospace font family. Comment out (or set to an empty
+# string) to use the system generic monospace face. On macOS the
+# default is Menlo.
+# family      = "JetBrains Mono"
+# family      = "SF Mono"
+size        = 18.0
+line_height = 22.0
+
+[colors]
+# Built-in color scheme. Currently supported: "dark" (default),
+# "light". Custom palettes are a follow-up item.
+scheme = "dark"

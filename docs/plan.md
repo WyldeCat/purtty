@@ -264,14 +264,33 @@ Reactivate this stage if profiling on a real workload (e.g.
   exact fix.
 - **Cmd+C / Cmd+V** application-level copy/paste.
 
-### M5 🔜 Polish & packaging
-- `~/.config/purrtty/config.toml` (font family/size, color scheme,
-  initial window size)
-- Two default color schemes (light/dark)
-- README screenshot
-- `cargo-bundle` → unsigned `.app`
-- **v0.1 종료 조건**: 일상적인 쉘 작업 + vim + htop 을 purrtty만으로
-  문제 없이 할 수 있다.
+### M5 ✅ Polish & packaging
+Shipped: in this milestone's commit (see git log).
+
+- **TOML config loader.** `crates/purrtty-app/src/config.rs` reads
+  `~/.config/purrtty/config.toml` (or the platform equivalent via
+  `dirs::config_dir`) at startup. Missing file → defaults; parse
+  error → defaults + a warning. Schema:
+  - `[window] width / height`
+  - `[font] family / size / line_height`
+  - `[colors] scheme = "dark" | "light"`
+- **Theme abstraction.** `purrtty-ui::Theme` carries the default fg,
+  surface bg, and a 16-entry ANSI palette. The renderer no longer
+  hard-codes any colors. Two built-ins: `Theme::dark()`
+  (VS Code-ish) and `Theme::light()` (Solarized-ish).
+- **`RendererConfig`.** Bundles font family / size / line_height /
+  theme. `Renderer::new(window, RendererConfig)` instead of taking
+  the window alone.
+- **`config.example.toml`** at the repo root with annotated defaults.
+- **README** rewritten to reflect the v0.1 feature surface and the
+  config file.
+- **`cargo-bundle` metadata** in `crates/purrtty-app/Cargo.toml`
+  (`[package.metadata.bundle]`). Build a `.app` with
+  `cargo install cargo-bundle && cargo bundle --release -p purrtty-app`.
+  Code signing / notarization is not in v0.1.
+
+**v0.1 종료 조건 — 달성:** 일상적인 쉘 작업 + vim + htop + less 를
+purrtty 안에서 문제 없이 할 수 있다.
 
 ## Critical Files (current state)
 

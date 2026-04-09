@@ -9,5 +9,7 @@
 
 mod quad;
 mod renderer;
+pub mod theme;
 
 pub use renderer::Renderer;
+pub use theme::{RendererConfig, Theme, ThemeBg};

@@ -9,7 +9,11 @@
 
 #![forbid(unsafe_code)]
 
+mod config;
+
 use std::sync::{Arc, Mutex};
+
+use config::Config;
 
 use anyhow::Result;
 use purrtty_pty::PtySession;
@@ -44,6 +48,8 @@ struct PurrttyApp {
     /// Latest modifier state from `WindowEvent::ModifiersChanged`. Used by
     /// the keyboard mapper to detect Ctrl/Alt/Cmd combos.
     modifiers: ModifiersState,
+    /// Loaded user config — used to seed the window and the renderer.
+    config: Config,
 }
 
 /// Approximate cell line height for turning pixel scroll deltas into rows.
@@ -51,9 +57,10 @@ struct PurrttyApp {
 const SCROLL_LINE_HEIGHT: f64 = 22.0;
 
 impl PurrttyApp {
-    fn with_proxy(proxy: EventLoopProxy<UserEvent>) -> Self {
+    fn new(proxy: EventLoopProxy<UserEvent>, config: Config) -> Self {
         Self {
             proxy: Some(proxy),
+            config,
             ..Self::default()
         }
     }
@@ -72,7 +79,10 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
         }
         let attrs = Window::default_attributes()
             .with_title("purrtty")
-            .with_inner_size(winit::dpi::LogicalSize::new(960.0, 600.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                self.config.window.width,
+                self.config.window.height,
+            ));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(err) => {
@@ -87,7 +97,7 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
             "window created"
         );
 
-        let renderer = match Renderer::new(window.clone()) {
+        let renderer = match Renderer::new(window.clone(), self.config.renderer_config()) {
             Ok(r) => r,
             Err(err) => {
                 error!(?err, "failed to initialize renderer");
@@ -353,8 +363,9 @@ fn main() -> Result<()> {
     let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
+    let config = Config::load();
     let proxy = event_loop.create_proxy();
-    let mut app = PurrttyApp::with_proxy(proxy);
+    let mut app = PurrttyApp::new(proxy, config);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
