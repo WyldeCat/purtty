@@ -18,9 +18,9 @@ use purrtty_ui::Renderer;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// Events posted to the winit loop from background threads.
@@ -41,6 +41,9 @@ struct PurrttyApp {
     proxy: Option<EventLoopProxy<UserEvent>>,
     /// How many rows the view is scrolled into scrollback. 0 = live bottom.
     scroll_offset: usize,
+    /// Latest modifier state from `WindowEvent::ModifiersChanged`. Used by
+    /// the keyboard mapper to detect Ctrl/Alt/Cmd combos.
+    modifiers: ModifiersState,
 }
 
 /// Approximate cell line height for turning pixel scroll deltas into rows.
@@ -118,6 +121,9 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
             }
         };
 
+        // Allow macOS / X11 IME composition events to flow through.
+        window.set_ime_allowed(true);
+
         self.window = Some(window.clone());
         self.renderer = Some(renderer);
         self.pty = Some(pty);
@@ -179,8 +185,29 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                     warn!(?err, "render failed");
                 }
             }
+            WindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods.state();
+            }
+            WindowEvent::Ime(ime) => {
+                // Forward committed IME input (e.g. finalized hangul) to the
+                // shell. Preedit composition is currently not displayed —
+                // overlay rendering is a follow-up.
+                if let Ime::Commit(text) = ime {
+                    if !text.is_empty() {
+                        if self.scroll_offset != 0 {
+                            self.scroll_offset = 0;
+                            self.redraw();
+                        }
+                        if let Some(pty) = self.pty.as_mut() {
+                            if let Err(err) = pty.write(text.as_bytes()) {
+                                warn!(?err, "pty write failed (ime commit)");
+                            }
+                        }
+                    }
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some(bytes) = key_event_to_bytes(&event) {
+                if let Some(bytes) = key_event_to_bytes(&event, self.modifiers) {
                     // Any real input snaps the view back to the live bottom.
                     if self.scroll_offset != 0 {
                         self.scroll_offset = 0;
@@ -224,20 +251,67 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
     }
 }
 
-/// Translate a winit `KeyEvent` into the bytes a shell expects on stdin.
+/// Translate a winit `KeyEvent` (plus the latest `ModifiersState`) into
+/// the bytes a shell expects on stdin.
 ///
-/// This is the minimum usable set: Enter, Tab, Backspace, Escape, arrow
-/// keys, and whatever characters winit gives us in `text` (which already
-/// accounts for the keyboard layout and modifiers for printable input).
-fn key_event_to_bytes(event: &KeyEvent) -> Option<Vec<u8>> {
+/// Mapping rules:
+/// - **Cmd / Super**: app-level shortcut on macOS — never forwarded to
+///   the PTY.
+/// - **Ctrl + letter**: ASCII control byte (`Ctrl+A` → `0x01`, …,
+///   `Ctrl+Z` → `0x1A`). Plus the punctuation control codes
+///   (`Ctrl+[` = ESC, `Ctrl+\\` = FS, `Ctrl+]` = GS, `Ctrl+^` = RS,
+///   `Ctrl+_` = US, `Ctrl+?` = DEL, `Ctrl+Space` = NUL).
+/// - **Alt + char**: ESC prefix + the char (xterm "meta" convention).
+/// - **Named keys** (Enter, Tab, arrows, ...): fixed escape sequences.
+/// - **Otherwise**: whatever winit composed into `event.text` for the
+///   current keyboard layout.
+fn key_event_to_bytes(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
     if event.state != ElementState::Pressed {
         return None;
     }
 
-    // Named keys we translate to explicit escape sequences. For any other
-    // named key (Space, letters composed with modifiers, etc.) we fall
-    // through to the text fallback below, which winit fills in with the
-    // already-composed character(s).
+    // Cmd (macOS) / Super shortcuts are application-level — don't leak
+    // them to the shell.
+    if mods.super_key() {
+        return None;
+    }
+
+    // Ctrl + letter / punctuation → ASCII control byte.
+    if mods.control_key() {
+        if let Key::Character(s) = &event.logical_key {
+            if let Some(ch) = s.chars().next() {
+                let lower = ch.to_ascii_lowercase();
+                if lower.is_ascii_lowercase() {
+                    return Some(vec![lower as u8 - b'a' + 1]);
+                }
+                let byte = match ch {
+                    '@' | ' ' => Some(0x00),
+                    '[' => Some(0x1B),
+                    '\\' => Some(0x1C),
+                    ']' => Some(0x1D),
+                    '^' => Some(0x1E),
+                    '_' => Some(0x1F),
+                    '?' => Some(0x7F),
+                    _ => None,
+                };
+                if let Some(b) = byte {
+                    return Some(vec![b]);
+                }
+            }
+        }
+        // Ctrl + named keys fall through (Ctrl+Enter etc. are unusual).
+    }
+
+    // Alt / Option + char → ESC + char (xterm meta sends ESC).
+    if mods.alt_key() && !mods.control_key() {
+        if let Key::Character(s) = &event.logical_key {
+            let mut out = Vec::with_capacity(1 + s.len());
+            out.push(0x1B);
+            out.extend_from_slice(s.as_bytes());
+            return Some(out);
+        }
+    }
+
     if let Key::Named(named) = &event.logical_key {
         let mapped: Option<&'static [u8]> = match named {
             NamedKey::Enter => Some(b"\r"),
