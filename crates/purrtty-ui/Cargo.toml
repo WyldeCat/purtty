@@ -16,3 +16,5 @@ wgpu = "22"
 glyphon = "0.6"
 pollster = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
+font-kit = "0.14"
+pathfinder_geometry = "0.5"
