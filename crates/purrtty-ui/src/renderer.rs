@@ -217,6 +217,9 @@ impl Renderer {
                 continue;
             }
             let (text, attrs_list) = self.build_line(row);
+            if view_idx == 0 {
+                tracing::debug!(row0_text = text.trim_end(), "renderer: updating row 0");
+            }
             self.buffer.lines[view_idx].set_text(text, LineEnding::default(), attrs_list);
             self.row_hashes[view_idx] = hash;
         }

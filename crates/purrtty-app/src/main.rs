@@ -387,9 +387,25 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                             .map(|mut term| term.grid_mut().drain_responses())
                     })
                     .unwrap_or_default();
+                if !responses.is_empty() {
+                    tracing::debug!(count = responses.len(), "draining terminal responses");
+                }
                 if let Some(pty) = self.pty.as_mut() {
                     for resp in responses {
                         let _ = pty.write(&resp);
+                    }
+                }
+                // Debug: log grid row 0 content to verify PTY data arrived
+                if let Some(terminal) = self.terminal.as_ref() {
+                    if let Ok(term) = terminal.lock() {
+                        let grid = term.grid();
+                        let row0: String = (0..grid.cols().min(40))
+                            .map(|c| grid.cell(0, c).ch)
+                            .collect();
+                        let trimmed = row0.trim_end();
+                        if !trimmed.is_empty() {
+                            tracing::debug!(row0 = trimmed, "PtyDataArrived: grid row 0");
+                        }
                     }
                 }
                 self.redraw();
