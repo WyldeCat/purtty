@@ -187,3 +187,63 @@ fn wide_char_cursor_advance() {
     // 2 wide chars × 2 cells each = 4.
     assert_eq!(cursor.col, 4, "cursor should advance by 4 for two wide chars");
 }
+
+#[test]
+fn korean_echo_renders_correctly() {
+    let terminal = run_shell(24, 80, &["echo 안녕하세요"], Duration::from_secs(2));
+    let all_text: String = (0..24)
+        .map(|r| row_text(&terminal, r))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all_text.contains("안녕하세요"),
+        "expected '안녕하세요' in grid, got:\n{all_text}"
+    );
+}
+
+#[test]
+fn korean_mixed_with_ascii() {
+    let mut terminal = purrtty_term::Terminal::new(2, 20);
+    terminal.advance("a한b글c".as_bytes());
+    let grid = terminal.grid();
+    assert_eq!(grid.cell(0, 0).ch, 'a');
+    assert_eq!(grid.cell(0, 1).ch, '한');
+    assert_eq!(grid.cell(0, 2).ch, '\0'); // WIDE_CONT
+    assert_eq!(grid.cell(0, 3).ch, 'b');
+    assert_eq!(grid.cell(0, 4).ch, '글');
+    assert_eq!(grid.cell(0, 5).ch, '\0'); // WIDE_CONT
+    assert_eq!(grid.cell(0, 6).ch, 'c');
+    assert_eq!(grid.cursor().col, 7);
+}
+
+#[test]
+fn korean_backspace_preserves_prompt() {
+    let mut terminal = purrtty_term::Terminal::new(2, 20);
+    // Simulate: prompt "% ", then type "한", then backspace twice.
+    terminal.advance(b"% ");
+    terminal.advance("한".as_bytes());
+    // Cursor is at col 4 (2 for "% " + 2 for wide char).
+    assert_eq!(terminal.grid().cursor().col, 4);
+    // Backspace twice: should erase the wide char area.
+    terminal.advance(b"\x08\x08  \x08\x08");
+    // Cursor should be back at col 2 (after "% ").
+    assert_eq!(terminal.grid().cursor().col, 2);
+    // Prompt should still be intact.
+    assert_eq!(terminal.grid().cell(0, 0).ch, '%');
+    assert_eq!(terminal.grid().cell(0, 1).ch, ' ');
+}
+
+#[test]
+fn korean_line_wrap() {
+    let mut terminal = purrtty_term::Terminal::new(2, 6);
+    // "aaa" fills cols 0-2, then "한" (width 2) needs cols 3-4.
+    // That fits. Then "글" needs 2 cols starting at 5, but only 1
+    // col left — should wrap to next line.
+    terminal.advance("aaa한글".as_bytes());
+    assert_eq!(terminal.grid().cell(0, 0).ch, 'a');
+    assert_eq!(terminal.grid().cell(0, 3).ch, '한');
+    assert_eq!(terminal.grid().cell(0, 4).ch, '\0'); // WIDE_CONT
+    // "글" wrapped to row 1
+    assert_eq!(terminal.grid().cell(1, 0).ch, '글');
+    assert_eq!(terminal.grid().cell(1, 1).ch, '\0'); // WIDE_CONT
+}
