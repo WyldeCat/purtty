@@ -33,7 +33,7 @@ Run **all tests** before every commit:
 # Unit tests (33 tests, instant)
 cargo test -p purrtty-term
 
-# Integration smoke tests (9 tests, ~3s, spawns real PTY)
+# Integration smoke tests (16 tests, ~3s, spawns real PTY + font checks)
 cargo test -p purrtty-app --test smoke
 
 # Both at once
@@ -55,7 +55,7 @@ cargo test -p purrtty-term && cargo test -p purrtty-app --test smoke
 - Reverse index (RI at top)
 - OSC 7 (cwd parsing, percent-decode)
 
-**Smoke tests (9):**
+**Smoke tests (16):**
 - Shell prompt appears after PTY spawn
 - `ls` produces output in the grid
 - `echo` text appears in the grid
@@ -65,6 +65,13 @@ cargo test -p purrtty-term && cargo test -p purrtty-app --test smoke
 - OSC 7 sets cwd
 - Alt screen round-trip preserves primary buffer
 - Wide char cursor advance
+- Korean echo via real PTY (`echo 안녕하세요`)
+- Korean mixed with ASCII (cell-by-cell + WIDE_CONT)
+- Korean backspace preserves prompt
+- Korean line wrap at grid boundary
+- Font: ASCII glyph coverage (primary font)
+- Font: Korean glyph coverage (primary + fallbacks)
+- Font: Box-drawing / symbol glyph coverage
 
 ## Pre-commit checklist
 
