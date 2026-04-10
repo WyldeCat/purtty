@@ -39,8 +39,6 @@ pub struct Renderer {
 
     line_height: f32,
     theme: Theme,
-    font_family: Option<String>,
-    surface_format: wgpu::TextureFormat,
 }
 
 impl Renderer {
@@ -113,8 +111,6 @@ impl Renderer {
             quads,
             line_height: cfg.line_height,
             theme: cfg.theme,
-            font_family: cfg.font_family,
-            surface_format: format,
         })
     }
 
@@ -140,7 +136,9 @@ impl Renderer {
     }
 
     /// Change font size by `delta` pixels. Returns new `(rows, cols)` if
-    /// the glyph cache was successfully rebuilt, or `None` if clamped.
+    /// the size actually changed, or `None` if clamped to the same value.
+    /// Reuses loaded fonts and GPU pipeline — only the glyph atlas is
+    /// cleared (glyphs are re-rasterized lazily on next render).
     pub fn change_font_size(&mut self, delta: f32) -> Option<(u16, u16)> {
         let cur = self.glyphs.font_size();
         let new_size = (cur + delta).clamp(8.0, 72.0);
@@ -148,16 +146,7 @@ impl Renderer {
             return None;
         }
         let new_line_height = (new_size * 1.222).round();
-        let new_glyphs = GlyphCache::new(
-            &self.device,
-            &self.queue,
-            self.surface_format,
-            self.font_family.as_deref(),
-            new_size,
-            new_line_height,
-        )
-        .ok()?;
-        self.glyphs = new_glyphs;
+        self.glyphs.rebuild_for_size(new_size, new_line_height);
         self.line_height = new_line_height;
         Some(self.grid_dimensions())
     }

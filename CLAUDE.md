@@ -55,7 +55,7 @@ cargo test -p purrtty-term && cargo test -p purrtty-app --test smoke
 - Reverse index (RI at top)
 - OSC 7 (cwd parsing, percent-decode)
 
-**Smoke tests (16):**
+**Smoke tests (17):**
 - Shell prompt appears after PTY spawn
 - `ls` produces output in the grid
 - `echo` text appears in the grid
@@ -72,13 +72,21 @@ cargo test -p purrtty-term && cargo test -p purrtty-app --test smoke
 - Font: ASCII glyph coverage (primary font)
 - Font: Korean glyph coverage (primary + fallbacks)
 - Font: Box-drawing / symbol glyph coverage
+- Prompt visible without focus (deferred redraw regression)
 
 ## Pre-commit checklist
 
 1. `cargo check --workspace` — no errors
 2. `cargo test -p purrtty-term` — 33/33 pass
-3. `cargo test -p purrtty-app --test smoke` — 9/9 pass
+3. `cargo test -p purrtty-app --test smoke` — 17/17 pass
 4. `cargo run --bin headless` — prompt appears in grid dump
+
+## Design principles
+
+- **Always consider performance.** GPU-accelerated terminal must stay
+  responsive. Prefer reusing existing resources (fonts, GPU pipelines,
+  buffers) over recreating them. Avoid blocking the main thread with
+  heavy work — use background threads or lazy initialization instead.
 
 ## Key patterns
 

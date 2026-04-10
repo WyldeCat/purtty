@@ -348,6 +348,23 @@ impl GlyphCache {
         })
     }
 
+    /// Change the font size without reloading fonts or recreating the GPU
+    /// pipeline. Clears cached glyphs so they are re-rasterized on demand.
+    pub fn rebuild_for_size(&mut self, new_size: f32, new_line_height: f32) {
+        let fk_metrics = self.font.metrics();
+        let scale = new_size / fk_metrics.units_per_em as f32;
+        self.ascent = fk_metrics.ascent * scale;
+        self.cell_width = Self::measure_advance(&self.font, new_size);
+        self.font_size = new_size;
+        self.line_height = new_line_height;
+
+        // Clear atlas packing state — glyphs will be re-rasterized lazily.
+        self.entries.clear();
+        self.pack_x = 0;
+        self.pack_y = 0;
+        self.row_h = 0;
+    }
+
     fn measure_advance(font: &Font, size: f32) -> f32 {
         if let Some(gid) = font.glyph_for_char('M') {
             if let Ok(adv) = font.advance(gid) {
