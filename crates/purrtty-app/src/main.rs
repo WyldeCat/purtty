@@ -428,6 +428,11 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                 info!("close requested, exiting");
                 event_loop.exit();
             }
+            WindowEvent::Focused(true) | WindowEvent::Occluded(false) => {
+                // Window became visible / got focus — re-render in case
+                // early frames were discarded before the window appeared.
+                self.redraw();
+            }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size);
