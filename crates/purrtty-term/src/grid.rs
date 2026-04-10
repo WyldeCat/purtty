@@ -86,6 +86,11 @@ pub struct Grid {
     /// (`\e]7;file://host/path\a`). `None` if no OSC 7 has been
     /// received yet.
     cwd: Option<PathBuf>,
+
+    /// Pending responses to terminal queries (DA, DSR, etc.) that the
+    /// parser queued. The app layer drains this after each advance()
+    /// and writes the bytes back to the PTY.
+    response_queue: Vec<Vec<u8>>,
 }
 
 impl Grid {
@@ -106,6 +111,7 @@ impl Grid {
             in_alt_screen: false,
             primary_snapshot: None,
             cwd: None,
+            response_queue: Vec::new(),
         }
     }
 
@@ -154,6 +160,16 @@ impl Grid {
 
     pub fn set_cwd(&mut self, path: PathBuf) {
         self.cwd = Some(path);
+    }
+
+    /// Queue a response to be sent back to the PTY (e.g. DA1, DSR).
+    pub fn queue_response(&mut self, bytes: Vec<u8>) {
+        self.response_queue.push(bytes);
+    }
+
+    /// Drain all pending responses. The caller writes them to the PTY.
+    pub fn drain_responses(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.response_queue)
     }
 
     /// Borrow the cell at `(row, col)`. Panics if out of bounds — callers

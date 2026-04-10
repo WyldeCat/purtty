@@ -375,7 +375,25 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::PtyDataArrived => self.redraw(),
+            UserEvent::PtyDataArrived => {
+                // Drain any pending terminal responses (DA, DSR, etc.)
+                // that were queued during the last advance() call.
+                let responses = self
+                    .terminal
+                    .as_ref()
+                    .and_then(|t| {
+                        t.lock()
+                            .ok()
+                            .map(|mut term| term.grid_mut().drain_responses())
+                    })
+                    .unwrap_or_default();
+                if let Some(pty) = self.pty.as_mut() {
+                    for resp in responses {
+                        let _ = pty.write(&resp);
+                    }
+                }
+                self.redraw();
+            }
             UserEvent::AgentFinished { exit_code } => {
                 info!(exit_code, "agent finished");
                 self.input_mode = InputMode::Normal;

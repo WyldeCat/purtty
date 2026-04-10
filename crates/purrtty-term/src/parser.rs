@@ -161,6 +161,25 @@ impl Perform for GridPerformer<'_> {
                 self.grid.apply_sgr(&flat);
             }
 
+            // DA1 — Device Attributes. Respond as a VT220.
+            'c' => {
+                if intermediates.is_empty() {
+                    self.grid.queue_response(b"\x1b[?62;22c".to_vec());
+                }
+            }
+
+            // DSR — Device Status Report.
+            'n' => {
+                let mode = first_nonzero(params, 0);
+                if mode == 6 {
+                    // CPR — Cursor Position Report (1-indexed).
+                    let row = self.grid.cursor().row + 1;
+                    let col = self.grid.cursor().col.min(self.grid.cols() - 1) + 1;
+                    self.grid
+                        .queue_response(format!("\x1b[{};{}R", row, col).into_bytes());
+                }
+            }
+
             _ => {}
         }
     }
