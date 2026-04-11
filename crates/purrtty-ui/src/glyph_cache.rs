@@ -349,8 +349,9 @@ impl GlyphCache {
     }
 
     /// Change the font size without reloading fonts or recreating the GPU
-    /// pipeline. Clears cached glyphs so they are re-rasterized on demand.
-    pub fn rebuild_for_size(&mut self, new_size: f32, new_line_height: f32) {
+    /// pipeline. Clears cached glyphs and zeroes the atlas texture so new
+    /// glyphs don't bleed into each other through stale pixels.
+    pub fn rebuild_for_size(&mut self, queue: &wgpu::Queue, new_size: f32, new_line_height: f32) {
         let fk_metrics = self.font.metrics();
         let scale = new_size / fk_metrics.units_per_em as f32;
         self.ascent = fk_metrics.ascent * scale;
@@ -363,6 +364,29 @@ impl GlyphCache {
         self.pack_x = 0;
         self.pack_y = 0;
         self.row_h = 0;
+
+        // Zero the atlas texture so stale pixels from the old size don't
+        // bleed into the new glyphs via linear sampling at cell edges.
+        let zero = vec![0u8; (ATLAS_SIZE * ATLAS_SIZE) as usize];
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.atlas_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &zero,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(ATLAS_SIZE),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     fn measure_advance(font: &Font, size: f32) -> f32 {

@@ -146,7 +146,7 @@ impl Renderer {
             return None;
         }
         let new_line_height = (new_size * 1.222).round();
-        self.glyphs.rebuild_for_size(new_size, new_line_height);
+        self.glyphs.rebuild_for_size(&self.queue, new_size, new_line_height);
         self.line_height = new_line_height;
         Some(self.grid_dimensions())
     }
