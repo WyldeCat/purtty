@@ -12,6 +12,7 @@
 mod agent;
 mod config;
 mod selection;
+mod urls;
 
 use std::sync::{Arc, Mutex};
 
@@ -175,6 +176,59 @@ impl PurrttyApp {
         Some(GridPoint::new(abs_row, col))
     }
 
+    /// Return the URL at the given physical pixel position, if any.
+    /// Scans the row under the cursor for `http://`, `https://`, and
+    /// `file://` schemes and checks which (if any) contains the click.
+    fn url_at_pixel(&self, x: f64, y: f64) -> Option<String> {
+        let renderer = self.renderer.as_ref()?;
+        let (pad_x, pad_y, cell_w, cell_h) = renderer.cell_metrics();
+        let (rows, cols) = renderer.grid_dimensions();
+        let (view_row, click_col) = pixel_to_cell(
+            x as f32,
+            y as f32,
+            pad_x,
+            pad_y,
+            cell_w,
+            cell_h,
+            rows as usize,
+            cols as usize,
+        );
+        let terminal = self.terminal.as_ref()?;
+        let term = terminal.lock().ok()?;
+        let row_cells = term.grid().row_at(view_row, self.scroll_offset)?;
+        // Build the row's string and a parallel (char_byte_index → col)
+        // mapping so we can convert URL byte ranges back to columns.
+        let mut row_text = String::with_capacity(row_cells.len());
+        let mut byte_to_col: Vec<usize> = Vec::with_capacity(row_cells.len());
+        for (col, cell) in row_cells.iter().enumerate() {
+            if cell.ch == '\0' {
+                continue; // wide-char continuation
+            }
+            let len = cell.ch.len_utf8();
+            row_text.push(cell.ch);
+            for _ in 0..len {
+                byte_to_col.push(col);
+            }
+        }
+        let row_text = row_text.trim_end();
+        let byte_to_col = &byte_to_col[..row_text.len()];
+
+        for range in urls::find_urls(row_text) {
+            let Some(&start_col) = byte_to_col.get(range.start) else {
+                continue;
+            };
+            let end_col = byte_to_col
+                .get(range.end - 1)
+                .copied()
+                .unwrap_or(start_col)
+                + 1;
+            if click_col >= start_col && click_col < end_col {
+                return Some(row_text[range].to_string());
+            }
+        }
+        None
+    }
+
     fn copy_selection_to_clipboard(&mut self) {
         let Some(sel) = self.selection else { return };
         if sel.is_empty() {
@@ -201,7 +255,6 @@ impl PurrttyApp {
     }
 
     fn paste_from_clipboard(&mut self) {
-        let Some(pty) = self.pty.as_mut() else { return };
         let text = match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
             Ok(t) => t,
             Err(err) => {
@@ -214,12 +267,25 @@ impl PurrttyApp {
         }
         // Normalize \r\n and \n to \r (what the shell expects as Enter).
         let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
-        if let Err(err) = pty.write(normalized.as_bytes()) {
-            warn!(?err, "pty write failed (paste)");
+
+        // If the shell enabled bracketed paste via `\e[?2004h`, wrap
+        // the content so it can tell paste apart from typed input.
+        // This keeps zsh / fish / bash from prematurely executing
+        // multi-line pastes.
+        let bracketed = self
+            .terminal
+            .as_ref()
+            .and_then(|t| t.lock().ok().map(|g| g.grid().bracketed_paste()))
+            .unwrap_or(false);
+        let payload = build_paste_payload(&normalized, bracketed);
+
+        if let Some(pty) = self.pty.as_mut() {
+            if let Err(err) = pty.write(&payload) {
+                warn!(?err, "pty write failed (paste)");
+            }
         }
         // Any paste fills the shell's input line.
         update_shell_input_empty(normalized.as_bytes(), &mut self.shell_input_empty);
-        // Snap scroll to live and drop selection.
         if self.scroll_offset != 0 {
             self.scroll_offset = 0;
         }
@@ -706,6 +772,14 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                 if button == MouseButton::Left {
                     match state {
                         ElementState::Pressed => {
+                            // Cmd+click: try to open URL at the click point.
+                            if self.modifiers.super_key() {
+                                let (x, y) = self.cursor_pos;
+                                if let Some(url) = self.url_at_pixel(x, y) {
+                                    open_url(&url);
+                                    return;
+                                }
+                            }
                             let (x, y) = self.cursor_pos;
                             if let Some(p) = self.mouse_to_grid_point(x, y) {
                                 self.selection = Some(Selection::new(p));
@@ -862,6 +936,35 @@ fn clear_line_bytes(start_col: usize) -> Vec<u8> {
     format!("\x1b[{}G\x1b[K", start_col + 1).into_bytes()
 }
 
+/// Open a URL in the user's default browser / handler. Uses macOS
+/// `open`; best-effort — logs a warning if it fails.
+fn open_url(url: &str) {
+    info!(url, "opening URL");
+    match std::process::Command::new("open").arg(url).spawn() {
+        Ok(_) => {}
+        Err(err) => warn!(?err, url, "failed to open URL"),
+    }
+}
+
+/// Build the byte payload to write to the PTY for a paste operation.
+/// If `bracketed` is true (shell enabled DECSET 2004), wrap the text in
+/// `\e[200~ ... \e[201~`. Any literal `\e[201~` in the pasted text is
+/// sanitized to prevent a paste from prematurely closing the bracket
+/// and letting the shell interpret the remainder as a command.
+fn build_paste_payload(text: &str, bracketed: bool) -> Vec<u8> {
+    if !bracketed {
+        return text.as_bytes().to_vec();
+    }
+    // Sanitize: strip any embedded end-of-paste marker so malicious
+    // clipboard content can't break out of the bracket.
+    let sanitized = text.replace("\x1b[201~", "");
+    let mut out = Vec::with_capacity(sanitized.len() + 12);
+    out.extend_from_slice(b"\x1b[200~");
+    out.extend_from_slice(sanitized.as_bytes());
+    out.extend_from_slice(b"\x1b[201~");
+    out
+}
+
 /// Update the `shell_input_empty` heuristic based on the bytes the user
 /// just sent to the shell. This is a best-effort estimate of whether
 /// the shell's input buffer is empty, used to decide whether `>` should
@@ -949,6 +1052,41 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_paste_payload_unbracketed() {
+        let payload = build_paste_payload("hello", false);
+        assert_eq!(payload, b"hello");
+    }
+
+    #[test]
+    fn build_paste_payload_bracketed_wraps() {
+        let payload = build_paste_payload("hello", true);
+        assert_eq!(payload, b"\x1b[200~hello\x1b[201~");
+    }
+
+    #[test]
+    fn build_paste_payload_bracketed_sanitizes_end_marker() {
+        // A malicious clipboard could embed \e[201~ to break out of
+        // the bracket. Sanitization must strip it so the shell only
+        // sees one closing bracket.
+        let payload = build_paste_payload("hi\x1b[201~rm -rf /", true);
+        let s = String::from_utf8(payload).unwrap();
+        assert_eq!(s, "\x1b[200~hirm -rf /\x1b[201~");
+        // Exactly one end marker.
+        assert_eq!(s.matches("\x1b[201~").count(), 1);
+    }
+
+    #[test]
+    fn parser_sets_bracketed_paste_mode() {
+        let mut t = purrtty_term::Terminal::new(4, 20);
+        // Shell enables bracketed paste.
+        t.advance(b"\x1b[?2004h");
+        assert!(t.grid().bracketed_paste());
+        // And disables it.
+        t.advance(b"\x1b[?2004l");
+        assert!(!t.grid().bracketed_paste());
+    }
 
     #[test]
     fn shell_input_empty_backspace_preserves_state() {

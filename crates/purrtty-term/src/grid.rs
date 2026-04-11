@@ -96,6 +96,11 @@ pub struct Grid {
     /// DEC mode 25 visibility — tracked here, honored by the renderer.
     cursor_visible: bool,
 
+    /// DEC mode 2004 — bracketed paste. The shell toggles this via
+    /// `\e[?2004h`/`\e[?2004l` to ask the terminal to wrap pasted text
+    /// in `\e[200~ ... \e[201~`, distinguishing paste from typed input.
+    bracketed_paste: bool,
+
     /// True while the alt screen is active. Scrollback is skipped in this
     /// mode; the primary buffer lives inside `primary_snapshot`.
     in_alt_screen: bool,
@@ -128,6 +133,7 @@ impl Grid {
             scroll_bot: rows,
             saved_cursor: None,
             cursor_visible: true,
+            bracketed_paste: false,
             in_alt_screen: false,
             primary_snapshot: None,
             cwd: None,
@@ -774,6 +780,14 @@ impl Grid {
 
     pub fn set_cursor_visible(&mut self, visible: bool) {
         self.cursor_visible = visible;
+    }
+
+    pub fn set_bracketed_paste(&mut self, enabled: bool) {
+        self.bracketed_paste = enabled;
+    }
+
+    pub fn bracketed_paste(&self) -> bool {
+        self.bracketed_paste
     }
 
     // ---------- SGR ----------

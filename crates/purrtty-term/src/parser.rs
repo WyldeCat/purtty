@@ -227,10 +227,10 @@ impl GridPerformer<'_> {
                     self.grid.leave_alt_screen();
                 }
             }
-            // Autowrap, bracketed paste, mouse tracking, etc. — accept
-            // silently so sending them doesn't garble state, but don't do
-            // anything with them yet.
-            7 | 2004 | 1000 | 1002 | 1003 | 1006 | 1015 | 12 => {}
+            2004 => self.grid.set_bracketed_paste(enable),
+            // Autowrap, mouse tracking, etc. — accept silently so
+            // sending them doesn't garble state but ignore their effects.
+            7 | 1000 | 1002 | 1003 | 1006 | 1015 | 12 => {}
             _ => {}
         }
     }
