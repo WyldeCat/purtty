@@ -347,4 +347,97 @@ mod tests {
         assert_eq!(row_text(t.grid(), 1), "aaa");
         assert_eq!(row_text(t.grid(), 2), "bbb");
     }
+
+    #[test]
+    fn shrink_wrapped_content_reflows() {
+        // A long line that wrapped inside a 10-col grid must still hold
+        // all its content when the grid is shrunk to 5 cols — the wrap
+        // points just shift.
+        let mut t = Terminal::new(6, 10);
+        // "abcdefghij" wraps exactly at col 10 (no soft wrap yet).
+        // Next char "k" auto-wraps to row 1.
+        t.advance_str("abcdefghijk");
+        t.grid_mut().resize(6, 5);
+        // All 11 chars should still be there.
+        assert_eq!(row_text(t.grid(), 0).trim_end(), "abcde");
+        assert_eq!(row_text(t.grid(), 1).trim_end(), "fghij");
+        assert_eq!(row_text(t.grid(), 2).trim_end(), "k");
+    }
+
+    #[test]
+    fn grow_unwraps_when_cols_increase() {
+        // A line that soft-wrapped in a narrow grid should unwrap when
+        // the grid gets wider.
+        let mut t = Terminal::new(6, 5);
+        t.advance_str("abcdefghij");
+        // At 5 cols, "abcde" wraps into row 0, "fghij" into row 1.
+        t.grid_mut().resize(6, 10);
+        assert_eq!(row_text(t.grid(), 0).trim_end(), "abcdefghij");
+    }
+
+    #[test]
+    fn explicit_newlines_not_merged_by_reflow() {
+        // Two hard-broken lines must stay separate across shrink/grow,
+        // even though widening the grid could technically fit both on
+        // one row.
+        let mut t = Terminal::new(4, 10);
+        t.advance_str("foo\r\nbar");
+        t.grid_mut().resize(4, 20);
+        assert_eq!(row_text(t.grid(), 0).trim_end(), "foo");
+        assert_eq!(row_text(t.grid(), 1).trim_end(), "bar");
+    }
+
+    /// Zoom-in then zoom-out should preserve content that was briefly
+    /// cropped out during the small size.
+    #[test]
+    fn shrink_then_grow_preserves_content() {
+        let mut t = Terminal::new(6, 10);
+        // Fill each row with a distinct marker.
+        t.advance_str("row0______\r\n");
+        t.advance_str("row1______\r\n");
+        t.advance_str("row2______\r\n");
+        t.advance_str("row3______\r\n");
+        t.advance_str("row4______\r\n");
+        t.advance_str("row5______");
+
+        // Zoom in: grid shrinks to 3 rows × 5 cols. Rows 3-5 and
+        // cols 5-9 get dropped by the current implementation.
+        t.grid_mut().resize(3, 5);
+
+        // Zoom out: grid grows back to 6 rows × 10 cols. We expect the
+        // originally-entered content to still be there.
+        t.grid_mut().resize(6, 10);
+
+        // All rows should still have their original content.
+        assert_eq!(
+            row_text(t.grid(), 0).trim_end(),
+            "row0______",
+            "row 0 content lost after shrink/grow"
+        );
+        assert_eq!(
+            row_text(t.grid(), 1).trim_end(),
+            "row1______",
+            "row 1 content lost"
+        );
+        assert_eq!(
+            row_text(t.grid(), 2).trim_end(),
+            "row2______",
+            "row 2 content lost"
+        );
+        assert_eq!(
+            row_text(t.grid(), 3).trim_end(),
+            "row3______",
+            "row 3 content lost — shrink dropped it"
+        );
+        assert_eq!(
+            row_text(t.grid(), 4).trim_end(),
+            "row4______",
+            "row 4 content lost"
+        );
+        assert_eq!(
+            row_text(t.grid(), 5).trim_end(),
+            "row5______",
+            "row 5 content lost"
+        );
+    }
 }
