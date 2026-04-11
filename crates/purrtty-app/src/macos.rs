@@ -17,7 +17,7 @@ use objc2::rc::Retained;
 use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
 use objc2_foundation::NSPoint;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use tracing::warn;
+use tracing::{info, warn};
 use winit::window::Window;
 
 /// Move the traffic lights so they sit vertically centered inside a
@@ -41,18 +41,49 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
         let Some(button) = ns_window.standardWindowButton(kind) else {
             continue;
         };
-        // The button's superview is the titlebar container; its
-        // height is what matters when we center.
+        // The button's superview is macOS's titlebar container view,
+        // which is typically ~28pt tall — smaller than our tab bar.
+        // Our tab bar is drawn from the window's top edge downward
+        // (y=0 at top) in wgpu coordinates. AppKit uses bottom-left
+        // origin for views; the button's origin.y is measured from the
+        // BOTTOM of its superview.
+        //
+        // We want: button top (in window top-down coords) at
+        //     desired_top = (bar_h - button_h) / 2
+        // Converting to AppKit parent coords (origin.y measured from
+        // the BOTTOM of the parent, which is flush with the titlebar's
+        // bottom inside the window):
+        //     origin.y = parent_h - button_h - desired_top
+        // We assume the parent (titlebar container) is anchored to
+        // the top of the window, so parent_bottom_in_window = parent_h.
         let frame = button.frame();
         let button_h = frame.size.height;
-        // Button origins in AppKit are measured from the BOTTOM-LEFT
-        // of the containing view. The containing view's height equals
-        // (approximately) the tab bar height when fullsize content
-        // view is on. Centering means:
-        //
-        //     origin.y = (bar_h - button_h) / 2
+        // SAFETY: superview is a standard NSView accessor; no state
+        // is mutated and the returned reference is released via arc.
+        let (parent_h, parent_y) = unsafe {
+            button
+                .superview()
+                .map(|s| {
+                    let f = s.frame();
+                    (f.size.height, f.origin.y)
+                })
+                .unwrap_or((28.0, 0.0))
+        };
         let bar_h = bar_height_logical_px as f64;
-        let new_y = ((bar_h - button_h) / 2.0).max(0.0);
+        let desired_top = ((bar_h - button_h) / 2.0).max(0.0);
+        let new_y = (parent_h - button_h - desired_top).max(0.0);
+        info!(
+            ?kind,
+            old_x = frame.origin.x,
+            old_y = frame.origin.y,
+            button_h,
+            parent_h,
+            parent_y,
+            bar_h,
+            desired_top,
+            new_y,
+            "repositioning traffic light"
+        );
         let new_origin = NSPoint {
             x: frame.origin.x,
             y: new_y,
@@ -62,6 +93,13 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
         unsafe {
             button.setFrameOrigin(new_origin);
         }
+        // Verify that the frame actually moved.
+        let after = button.frame();
+        info!(
+            ?kind,
+            after_y = after.origin.y,
+            "after reposition"
+        );
     }
 }
 
