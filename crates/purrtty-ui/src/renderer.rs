@@ -120,10 +120,11 @@ impl Renderer {
     }
 
     /// Height reserved for the tab bar, in pixels. Zero when there's
-    /// no tab bar (single tab / not set).
+    /// no tab bar (single tab / not set). Sized around the line height
+    /// so the bar scales with font zoom.
     pub fn tab_bar_height(&self) -> f32 {
         if self.tab_info.is_some() {
-            self.line_height + 6.0
+            (self.line_height + 12.0).max(32.0)
         } else {
             0.0
         }
@@ -349,64 +350,120 @@ impl Renderer {
             }
         }
 
-        // Tab bar.
+        // Tab bar — modeled after VS Code / Warp: a subtle dark strip
+        // across the top with an active tab that "sinks" into the main
+        // grid (same bg) plus a thin bottom accent line.
         if let Some((active_tab, tab_count)) = self.tab_info {
             let bar_h = tab_h;
             let bar_w = self.config.width as f32;
-            // Bar background — slightly darker than the main bg.
+
+            // Bar background: slightly lighter than the main bg so
+            // the active tab (which uses the main bg) reads as "in
+            // front" of the bar.
             let bar_bg = [
-                srgb_to_linear(0.10),
-                srgb_to_linear(0.10),
-                srgb_to_linear(0.12),
+                srgb_to_linear(0.145),
+                srgb_to_linear(0.145),
+                srgb_to_linear(0.150),
                 1.0,
             ];
             QuadRenderer::push_rect(&mut bg_verts, 0.0, 0.0, bar_w, bar_h, bar_bg);
 
-            // Evenly divide the horizontal space among the tabs.
-            let usable = (bar_w - 2.0 * PAD_X).max(0.0);
-            let max_tab_w: f32 = 160.0;
-            let tab_w = (usable / tab_count as f32).min(max_tab_w).max(32.0);
-            let tab_inner_h = bar_h - 4.0;
-            let active_color = [
-                srgb_to_linear(0.22),
-                srgb_to_linear(0.32),
-                srgb_to_linear(0.52),
+            // A single-pixel separator line at the very bottom of the
+            // bar, so the active tab's "missing" line reads as a cut
+            // into the bar.
+            let separator = [
+                srgb_to_linear(0.08),
+                srgb_to_linear(0.08),
+                srgb_to_linear(0.10),
                 1.0,
             ];
-            let inactive_color = [
-                srgb_to_linear(0.16),
-                srgb_to_linear(0.16),
-                srgb_to_linear(0.20),
-                1.0,
-            ];
-            for i in 0..tab_count {
-                let x = PAD_X + i as f32 * (tab_w + 4.0);
-                let y = 2.0;
-                let color = if i == active_tab { active_color } else { inactive_color };
-                QuadRenderer::push_rect(&mut bg_verts, x, y, tab_w, tab_inner_h, color);
+            QuadRenderer::push_rect(&mut bg_verts, 0.0, bar_h - 1.0, bar_w, 1.0, separator);
 
-                // Render the tab index ("1", "2", ...) centered vertically.
-                let label = (i + 1).to_string();
-                let mut glyph_x = x + 10.0;
-                let glyph_y = y + 2.0;
+            // Tab sizing: flexible up to a cap, min width keeps short
+            // labels readable.
+            let usable = bar_w.max(0.0);
+            let max_tab_w: f32 = 220.0;
+            let min_tab_w: f32 = 100.0;
+            let tab_w = (usable / tab_count as f32).clamp(min_tab_w, max_tab_w);
+
+            // Main-bg color — used to "cut" the active tab out of the bar.
+            let main_bg = self.theme.background.as_array();
+            // Accent (link blue) — same as URL hover color for visual unity.
+            let accent = [
+                srgb_to_linear(0.36),
+                srgb_to_linear(0.63),
+                srgb_to_linear(1.0),
+                1.0,
+            ];
+            // Active-tab label color: full foreground.
+            let active_text = {
+                let c = self.theme.foreground;
+                [
+                    srgb_to_linear(c.r() as f32 / 255.0),
+                    srgb_to_linear(c.g() as f32 / 255.0),
+                    srgb_to_linear(c.b() as f32 / 255.0),
+                    1.0,
+                ]
+            };
+            // Inactive-tab label color: dimmed ~55% gray.
+            let inactive_text = [
+                srgb_to_linear(0.52),
+                srgb_to_linear(0.52),
+                srgb_to_linear(0.56),
+                1.0,
+            ];
+
+            for i in 0..tab_count {
+                let x = i as f32 * tab_w;
+                if i == active_tab {
+                    // Active tab bg = main grid bg, making it look
+                    // like the grid "rises through" the bar.
+                    QuadRenderer::push_rect(&mut bg_verts, x, 0.0, tab_w, bar_h, main_bg);
+                    // Accent line at the top of the active tab.
+                    QuadRenderer::push_rect(&mut bg_verts, x, 0.0, tab_w, 2.0, accent);
+                }
+                // Tab label — centered. We measure the label width so
+                // it sits visually centered even when tab_w varies.
+                let label = format!("Tab {}", i + 1);
+                let label_w = label.chars().count() as f32 * cell_w;
+                let glyph_x_start = x + (tab_w - label_w) * 0.5;
+                let glyph_y = (bar_h - line_h) * 0.5;
+                let text_color = if i == active_tab { active_text } else { inactive_text };
+                let mut glyph_x = glyph_x_start;
                 for ch in label.chars() {
-                    if let Some(entry) = self.glyphs.get_or_insert(ch, &self.device, &self.queue) {
-                        let label_color = [
-                            srgb_to_linear(0.90),
-                            srgb_to_linear(0.90),
-                            srgb_to_linear(0.94),
-                            1.0,
-                        ];
+                    if let Some(entry) =
+                        self.glyphs.get_or_insert(ch, &self.device, &self.queue)
+                    {
                         GlyphCache::push_glyph(
                             &mut glyph_verts,
                             &entry,
                             glyph_x,
                             glyph_y,
                             ascent,
-                            label_color,
+                            text_color,
                         );
                         glyph_x += cell_w;
                     }
+                }
+                // Thin vertical separator between inactive tabs (not
+                // at the edges of the active tab — those are already
+                // defined by the bg color contrast).
+                if i + 1 < tab_count && i != active_tab && i + 1 != active_tab {
+                    let sep_x = x + tab_w;
+                    let sep_color = [
+                        srgb_to_linear(0.09),
+                        srgb_to_linear(0.09),
+                        srgb_to_linear(0.11),
+                        1.0,
+                    ];
+                    QuadRenderer::push_rect(
+                        &mut bg_verts,
+                        sep_x - 0.5,
+                        6.0,
+                        1.0,
+                        bar_h - 12.0,
+                        sep_color,
+                    );
                 }
             }
         }
