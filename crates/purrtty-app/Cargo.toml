@@ -27,6 +27,12 @@ toml = "0.8"
 dirs = "5"
 arboard = "3"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSButton", "NSWindow", "NSView", "NSResponder"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
+raw-window-handle = "0.6"
+
 # Metadata used by `cargo bundle` to produce a macOS .app. Build with:
 #     cargo install cargo-bundle
 #     cargo bundle --release -p purrtty-app

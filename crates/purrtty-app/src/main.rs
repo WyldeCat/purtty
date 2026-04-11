@@ -7,10 +7,10 @@
 //! pushed into the PTY; the reader thread feeds incoming bytes into
 //! the VT parser and wakes the UI via an `EventLoopProxy`.
 
-#![forbid(unsafe_code)]
-
 mod agent;
 mod config;
+#[cfg(target_os = "macos")]
+mod macos;
 mod selection;
 mod urls;
 
@@ -329,6 +329,17 @@ impl PurrttyApp {
             }
             if let Err(err) = session.pty.resize(rows, cols) {
                 warn!(?err, "pty resize failed after font zoom");
+            }
+        }
+        // Traffic-light centering depends on tab bar height, which
+        // scales with font size.
+        #[cfg(target_os = "macos")]
+        {
+            if let (Some(window), Some(renderer)) =
+                (self.window.as_ref(), self.renderer.as_ref())
+            {
+                let bar_h = renderer.tab_bar_height() / window.scale_factor() as f32;
+                macos::reposition_traffic_lights(window, bar_h);
             }
         }
         self.redraw();
@@ -790,6 +801,15 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
         // reserves space from the very first frame. This also resizes
         // the session's PTY/grid down by the tab bar height.
         self.sync_tab_info_and_resize();
+
+        // Vertically center macOS traffic lights inside our tab bar.
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(renderer) = self.renderer.as_ref() {
+                let bar_h = renderer.tab_bar_height() / window.scale_factor() as f32;
+                macos::reposition_traffic_lights(&window, bar_h);
+            }
+        }
 
         window.request_redraw();
 
