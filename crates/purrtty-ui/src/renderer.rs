@@ -147,19 +147,26 @@ impl Renderer {
         self.tab_info = if total >= 1 { Some((active, total)) } else { None };
     }
 
-    /// Compute per-tab rectangles for hit-testing (clicks). Returns a
-    /// vector of `(tab_index, tab_rect, close_button_rect)` where each
-    /// rect is `(x, y, w, h)` in physical pixel coordinates. Empty if
-    /// there is no tab bar.
+    /// Compute per-tab rectangles for hit-testing (clicks). All
+    /// dimensions scale with `cell_width` / `line_height` so the tab
+    /// bar grows proportionally under Cmd+/- font zoom — tab labels
+    /// don't overflow when the font gets bigger.
     pub fn tab_layout(&self) -> Vec<TabLayout> {
         let Some((_, tab_count)) = self.tab_info else { return Vec::new() };
         let bar_w = self.config.width as f32;
         let bar_h = self.tab_bar_height();
-        let max_tab_w: f32 = 220.0;
-        let min_tab_w: f32 = 100.0;
+        let cell_w = self.glyphs.cell_width;
+        let line_h = self.line_height;
+        // A tab must fit at least "Tab N" (5 chars) + padding + × +
+        // padding, all measured in current cell widths so the layout
+        // scales with font size.
+        let min_tab_w = (cell_w * 12.0).max(100.0);
+        let max_tab_w = (cell_w * 22.0).max(220.0);
         let tab_w = (bar_w / tab_count as f32).clamp(min_tab_w, max_tab_w);
-        let close_size: f32 = 16.0;
-        let close_pad: f32 = 8.0;
+        // Close button scales with line height so it stays in
+        // proportion with the text.
+        let close_size = (line_h * 0.85).max(16.0);
+        let close_pad = (cell_w * 0.6).max(8.0);
         let mut out = Vec::with_capacity(tab_count);
         for i in 0..tab_count {
             let x = i as f32 * tab_w;
