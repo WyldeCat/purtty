@@ -206,7 +206,7 @@ impl PurrttyApp {
                 InputMode::AgentInput { start_col, .. } => *start_col,
                 _ => 0,
             };
-            self.refresh_agent_line("", start_col);
+            self.clear_agent_line(start_col);
             self.input_mode = InputMode::Normal;
             self.redraw();
             return;
@@ -219,7 +219,7 @@ impl PurrttyApp {
                 _ => unreachable!(),
             };
             if buffer.trim().is_empty() {
-                self.refresh_agent_line("", start_col);
+                self.clear_agent_line(start_col);
                 self.input_mode = InputMode::Normal;
                 self.redraw();
                 return;
@@ -237,11 +237,13 @@ impl PurrttyApp {
                 if buffer.pop().is_some() {
                     let snap = buffer.clone();
                     let col = *start_col;
+                    // Still in agent mode — keep the "> " marker visible
+                    // even if the buffer is now empty.
                     self.refresh_agent_line(&snap, col);
                     self.redraw();
                 } else {
                     let col = *start_col;
-                    self.refresh_agent_line("", col);
+                    self.clear_agent_line(col);
                     self.input_mode = InputMode::Normal;
                     self.redraw();
                 }
@@ -264,22 +266,19 @@ impl PurrttyApp {
     }
 
     /// Redraw the agent input from `start_col` onwards, preserving the
-    /// shell prompt to the left. Uses CHA (cursor horizontal absolute)
-    /// to jump to the saved column and EL mode 0 to erase only from
-    /// that point to end of line.
+    /// shell prompt to the left. Always shows the "> " marker because
+    /// we are still in agent mode, regardless of whether the buffer
+    /// is empty. Use `clear_agent_line` for exit paths.
     fn refresh_agent_line(&self, buffer: &str, start_col: usize) {
-        // CHA is 1-indexed.
-        let line = if buffer.is_empty() {
-            // Erase the agent marker entirely.
-            format!("\x1b[{}G\x1b[K", start_col + 1)
-        } else {
-            format!(
-                "\x1b[{}G\x1b[K\x1b[1;36m> \x1b[0m{}",
-                start_col + 1,
-                buffer
-            )
-        };
-        self.echo_to_terminal(line.as_bytes());
+        let bytes = agent_line_bytes(buffer, start_col);
+        self.echo_to_terminal(&bytes);
+    }
+
+    /// Erase the agent input line (including the "> " marker) when
+    /// exiting agent mode.
+    fn clear_agent_line(&self, start_col: usize) {
+        let bytes = clear_line_bytes(start_col);
+        self.echo_to_terminal(&bytes);
     }
 
     fn echo_to_terminal(&self, bytes: &[u8]) {
@@ -673,6 +672,24 @@ fn key_event_to_bytes(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>>
     event.text.as_ref().map(|t| t.as_bytes().to_vec())
 }
 
+/// Build the bytes to redraw the agent input line at `start_col`,
+/// showing the "> " marker followed by `buffer`. The marker is always
+/// present because this is called while still in agent mode.
+fn agent_line_bytes(buffer: &str, start_col: usize) -> Vec<u8> {
+    // CHA (1-indexed) + EL mode 0 + "> " (bold cyan) + buffer.
+    format!(
+        "\x1b[{}G\x1b[K\x1b[1;36m> \x1b[0m{}",
+        start_col + 1,
+        buffer
+    )
+    .into_bytes()
+}
+
+/// Build the bytes to erase the agent line entirely (exit path).
+fn clear_line_bytes(start_col: usize) -> Vec<u8> {
+    format!("\x1b[{}G\x1b[K", start_col + 1).into_bytes()
+}
+
 /// Update the `shell_input_empty` heuristic based on the bytes the user
 /// just sent to the shell. This is a best-effort estimate of whether
 /// the shell's input buffer is empty, used to decide whether `>` should
@@ -833,6 +850,58 @@ mod tests {
         assert!(s);
     }
 
+    #[test]
+    fn agent_line_bytes_always_contains_marker() {
+        // Even with an empty buffer, the "> " marker must be drawn —
+        // we are still in agent mode.
+        let bytes = agent_line_bytes("", 5);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(
+            s.contains("> "),
+            "agent_line_bytes must always include the '> ' marker (empty buffer case): {s:?}"
+        );
+        assert!(s.contains("\x1b[6G"), "should CHA to start_col+1");
+        assert!(s.contains("\x1b[K"), "should erase to end of line");
+    }
+
+    #[test]
+    fn agent_line_bytes_with_buffer() {
+        let bytes = agent_line_bytes("hello", 2);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("> "));
+        assert!(s.contains("hello"));
+        assert!(s.ends_with("hello"));
+    }
+
+    #[test]
+    fn clear_line_bytes_has_no_marker() {
+        let bytes = clear_line_bytes(2);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(!s.contains("> "), "clear path should not draw marker");
+        assert_eq!(s, "\x1b[3G\x1b[K");
+    }
+
+    /// Reproduces the "> >" bug: in agent mode, typing chars then
+    /// backspacing them all left the marker erased (refresh_agent_line
+    /// with empty buffer), but mode stayed AgentInput. Next `>` got
+    /// appended to the buffer and drew "> >" via refresh_agent_line.
+    ///
+    /// With the fix, refresh_agent_line always draws "> " so the user
+    /// sees they're still in agent mode, and typing `>` shows "> >"
+    /// (which is now correct — it's literal agent input).
+    #[test]
+    fn backspace_keeps_marker_visible_in_agent_mode() {
+        // Simulating the call site: buffer was "a", pop returns Some,
+        // snap is "". refresh_agent_line("", col) is called.
+        let bytes = agent_line_bytes("", 4);
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(
+            s.contains("\x1b[1;36m> \x1b[0m"),
+            "the '> ' marker (bold cyan) must still be visible after \
+             backspacing to an empty buffer while still in agent mode"
+        );
+    }
+
     /// End-to-end: pressing backspace in Normal mode (e.g. from an
     /// extra backspace press after exiting agent mode) must not
     /// clobber shell_input_empty, otherwise `>` can't re-enter.
@@ -853,7 +922,7 @@ mod tests {
     fn can_reenter_agent_mode_after_backspace_exit() {
         // Simplified state matching PurrttyApp.
         let mut mode = InputMode::Normal;
-        let mut shell_input_empty = true;
+        let shell_input_empty = true;
 
         // Helper: simulate handle_normal_input for the `>` case.
         fn try_enter_agent(
@@ -902,8 +971,6 @@ mod tests {
             "should re-enter agent mode after backspace exit"
         );
         assert!(matches!(mode, InputMode::AgentInput { .. }));
-
-        let _ = shell_input_empty; // silence unused-mut warning
     }
 
     /// Backspacing past the empty agent buffer should exit agent mode
