@@ -666,18 +666,26 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // Cmd/Ctrl shortcuts handled by the app, not forwarded.
-                if (self.modifiers.control_key() || self.modifiers.super_key())
-                    && event.state == ElementState::Pressed
-                {
+                if event.state == ElementState::Pressed {
                     if let Key::Character(s) = &event.logical_key {
-                        match s.as_str() {
-                            "=" | "+" => { self.zoom_font(2.0); return; }
-                            "-" => { self.zoom_font(-2.0); return; }
-                            "0" => { self.zoom_font_reset(); return; }
-                            "c" | "C" => { self.copy_selection_to_clipboard(); return; }
-                            "v" | "V" => { self.paste_from_clipboard(); return; }
-                            _ => {}
+                        // Zoom: Cmd or Ctrl. Safe to intercept because
+                        // the shell never sees `Ctrl+=` etc.
+                        if self.modifiers.control_key() || self.modifiers.super_key() {
+                            match s.as_str() {
+                                "=" | "+" => { self.zoom_font(2.0); return; }
+                                "-" => { self.zoom_font(-2.0); return; }
+                                "0" => { self.zoom_font_reset(); return; }
+                                _ => {}
+                            }
+                        }
+                        // Clipboard: Cmd only. Ctrl+C must stay SIGINT
+                        // and Ctrl+V must stay a control byte.
+                        if self.modifiers.super_key() {
+                            match s.as_str() {
+                                "c" | "C" => { self.copy_selection_to_clipboard(); return; }
+                                "v" | "V" => { self.paste_from_clipboard(); return; }
+                                _ => {}
+                            }
                         }
                     }
                 }
