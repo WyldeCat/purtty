@@ -75,16 +75,12 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
         let bar_h = bar_height_logical_px as f64;
         let desired_top = ((bar_h - button_h) / 2.0).max(0.0);
         let new_y = (parent_h - button_h - desired_top).max(0.0);
-        info!(
+        // Per-frame repositioning — only log at trace to avoid spam.
+        tracing::trace!(
             ?kind,
-            old_x = frame.origin.x,
             old_y = frame.origin.y,
-            button_h,
-            parent_h,
-            parent_y,
-            bar_h,
-            desired_top,
             new_y,
+            bar_h,
             "repositioning traffic light"
         );
         // x stays at the macOS default — only y moves for vertical

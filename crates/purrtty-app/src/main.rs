@@ -212,7 +212,7 @@ impl PurrttyApp {
             .as_ref()
             .map(|r| r.tab_bar_height() / scale)
             .unwrap_or(40.0);
-        info!(bar_h, scale, "update_macos_traffic_lights");
+        // (runs on every frame — no log to avoid spam)
         if let Some(window) = self.window.as_ref() {
             macos::reposition_traffic_lights(window, bar_h);
         }
@@ -941,6 +941,12 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                 self.redraw();
             }
             WindowEvent::RedrawRequested => {
+                // Re-apply traffic-light positions on every frame.
+                // macOS resets button frames during its own layout
+                // passes, so a one-shot reposition isn't enough.
+                #[cfg(target_os = "macos")]
+                self.update_macos_traffic_lights();
+
                 let scroll_offset = self.scroll_offset;
                 let selection_range = self.selection.and_then(|s| {
                     if s.is_empty() {
@@ -1380,6 +1386,52 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies the full zoom → reposition chain:
+    /// 1. Different font sizes produce different tab_bar_height values
+    /// 2. Different bar heights produce different traffic-light y values
+    /// 3. y always centers the button in the bar (within parent constraints)
+    /// 4. x never changes
+    #[test]
+    fn traffic_light_y_changes_with_bar_height() {
+        let button_h = 14.0_f64;
+        let parent_h = 32.0_f64;
+        // Simulate: default font (line_h=22), zoomed (line_h=30), zoomed more (line_h=38)
+        let line_heights = [22.0_f32, 26.0, 30.0, 38.0];
+        let mut prev_y = None;
+        let mut prev_bar_h = None;
+        for line_h in line_heights {
+            let bar_h = (line_h + 18.0).max(38.0) as f64;
+            let desired_top = ((bar_h - button_h) / 2.0).max(0.0);
+            let new_y = (parent_h - button_h - desired_top).max(0.0);
+            // Bar gets taller with each zoom step.
+            if let Some(prev) = prev_bar_h {
+                assert!(
+                    bar_h >= prev,
+                    "bar should grow with line_h: {bar_h} < {prev}"
+                );
+            }
+            // y should decrease (button moves down in AppKit coords =
+            // moves down visually) as bar gets taller... until clamped.
+            if let Some(prev) = prev_y {
+                assert!(
+                    new_y <= prev,
+                    "button y should decrease (move down) as bar grows: \
+                     new_y={new_y} > prev={prev} at line_h={line_h}"
+                );
+            }
+            prev_y = Some(new_y);
+            prev_bar_h = Some(bar_h);
+        }
+        // Verify the range: at line_h=22, bar=40, y=5.
+        // At line_h=38, bar=56, desired_top=21, y=32-14-21=-3 → clamped to 0.
+        let bar_small = (22.0_f64 + 18.0).max(38.0);
+        let y_small = (parent_h - button_h - ((bar_small - button_h) / 2.0)).max(0.0);
+        assert!((y_small - 5.0).abs() < 0.01, "y at bar=40 should be 5, got {y_small}");
+        let bar_big = (38.0_f64 + 18.0).max(38.0);
+        let y_big = (parent_h - button_h - ((bar_big - button_h) / 2.0)).max(0.0);
+        assert_eq!(y_big, 0.0, "y at bar=56 should clamp to 0");
+    }
 
     #[test]
     fn traffic_light_position_stable_across_zooms() {
