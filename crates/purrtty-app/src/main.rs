@@ -8,6 +8,7 @@
 //! the VT parser and wakes the UI via an `EventLoopProxy`.
 
 mod agent;
+mod block;
 mod config;
 #[cfg(target_os = "macos")]
 mod macos;
