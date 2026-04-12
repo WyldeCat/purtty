@@ -427,58 +427,82 @@ impl Renderer {
             }
         }
 
-        // Block overlays: border + background tint + footer for each block.
+        // Block overlays — Warp-style minimal: thin horizontal
+        // separator between blocks + left accent bar for errors.
+        let separator_color = [
+            srgb_to_linear(0.28),
+            srgb_to_linear(0.28),
+            srgb_to_linear(0.30),
+            0.6,
+        ];
+        let error_accent = [
+            srgb_to_linear(0.85),
+            srgb_to_linear(0.25),
+            srgb_to_linear(0.25),
+            0.9,
+        ];
+        let grid_left = PAD_X - 4.0;
+        let grid_w = cols as f32 * cell_w + 8.0;
+
         for blk in blocks {
-            if blk.end_view_row > blk.start_view_row {
-                let border_color = match blk.state {
-                    0 => [ // running: blue
-                        srgb_to_linear(0.36), srgb_to_linear(0.63),
-                        srgb_to_linear(1.0), 0.9,
-                    ],
-                    2 => [ // error: red
-                        srgb_to_linear(0.85), srgb_to_linear(0.25),
-                        srgb_to_linear(0.25), 0.9,
-                    ],
-                    3 => [ // input: subtle border
-                        srgb_to_linear(0.35), srgb_to_linear(0.35),
-                        srgb_to_linear(0.38), 0.5,
-                    ],
-                    _ => [ // done: dim gray
-                        srgb_to_linear(0.40), srgb_to_linear(0.40),
-                        srgb_to_linear(0.42), 0.7,
-                    ],
+            if blk.end_view_row <= blk.start_view_row {
+                continue;
+            }
+            let by = grid_top + blk.start_view_row as f32 * line_h;
+            let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h;
+
+            // Horizontal separator at the TOP of each block (except
+            // the very first visible block — it's at the top already).
+            if blk.start_view_row > 0 {
+                QuadRenderer::push_rect(
+                    &mut overlay_verts,
+                    grid_left,
+                    by - 0.5,
+                    grid_w,
+                    1.0,
+                    separator_color,
+                );
+            }
+
+            // Left accent bar for errors (red) or running (blue).
+            match blk.state {
+                2 => {
+                    // Error: red left accent bar.
+                    QuadRenderer::push_rect(
+                        &mut overlay_verts,
+                        grid_left,
+                        by,
+                        3.0,
+                        bh,
+                        error_accent,
+                    );
+                }
+                0 => {
+                    // Running: blue left accent bar.
+                    QuadRenderer::push_rect(
+                        &mut overlay_verts,
+                        grid_left,
+                        by,
+                        3.0,
+                        bh,
+                        link_color,
+                    );
+                }
+                _ => {}
+            }
+
+            // Footer text (only if non-empty).
+            if !blk.footer.is_empty() {
+                let footer_y = by + bh - line_h;
+                let footer_x = grid_left + 8.0;
+                let footer_color = match blk.state {
+                    2 => error_accent,
+                    0 => link_color,
+                    _ => separator_color,
                 };
-                let bg_tint = match blk.state {
-                    0 => [srgb_to_linear(0.14), srgb_to_linear(0.16), srgb_to_linear(0.22), 0.3],
-                    2 => [srgb_to_linear(0.22), srgb_to_linear(0.10), srgb_to_linear(0.10), 0.3],
-                    3 => [srgb_to_linear(0.11), srgb_to_linear(0.11), srgb_to_linear(0.13), 0.15],
-                    _ => [srgb_to_linear(0.12), srgb_to_linear(0.12), srgb_to_linear(0.14), 0.2],
-                };
-
-                let bx = PAD_X - 4.0;
-                let by = grid_top + blk.start_view_row as f32 * line_h - 2.0;
-                let bw = (cols as f32 * cell_w) + 8.0;
-                let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h + 4.0;
-                let border_w = 2.0_f32;
-
-                // Background tint.
-                QuadRenderer::push_rect(&mut bg_verts, bx, by, bw, bh, bg_tint);
-                // Top border.
-                QuadRenderer::push_rect(&mut overlay_verts, bx, by, bw, border_w, border_color);
-                // Bottom border.
-                QuadRenderer::push_rect(&mut overlay_verts, bx, by + bh - border_w, bw, border_w, border_color);
-                // Left border.
-                QuadRenderer::push_rect(&mut overlay_verts, bx, by, border_w, bh, border_color);
-                // Right border.
-                QuadRenderer::push_rect(&mut overlay_verts, bx + bw - border_w, by, border_w, bh, border_color);
-
-                // Footer text — rendered at the bottom row of the block.
-                let footer_y = by + bh - line_h - 2.0;
-                let footer_x = bx + 8.0;
-                let footer_color = border_color;
                 let mut fx = footer_x;
                 for ch in blk.footer.chars() {
-                    if fx + cell_w > bx + bw - 8.0 {
+                    if fx + cell_w > grid_left + grid_w - 8.0 {
                         break;
                     }
                     if let Some(entry) =
