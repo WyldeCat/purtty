@@ -35,6 +35,24 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
             return;
         }
     };
+    // Resize the titlebar container (the buttons' parent view) to
+    // match our tab bar height. Without this, macOS fixes the
+    // container at ~32pt and clamps the buttons — they can't center
+    // in a bar taller than parent_h + button_h.
+    let bar_h_f = bar_height_logical_px as f64;
+    if let Some(first_btn) = ns_window.standardWindowButton(NSWindowButton::CloseButton) {
+        unsafe {
+            if let Some(parent) = first_btn.superview() {
+                let mut pf = parent.frame();
+                let top = pf.origin.y + pf.size.height;
+                pf.size.height = bar_h_f;
+                pf.origin.y = top - bar_h_f;
+                parent.setFrame(pf);
+                parent.setNeedsDisplay(true);
+            }
+        }
+    }
+
     let buttons = [
         (NSWindowButton::CloseButton, DEFAULT_X[0]),
         (NSWindowButton::MiniaturizeButton, DEFAULT_X[1]),
@@ -44,33 +62,13 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
         let Some(button) = ns_window.standardWindowButton(kind) else {
             continue;
         };
-        // The button's superview is macOS's titlebar container view,
-        // which is typically ~28pt tall — smaller than our tab bar.
-        // Our tab bar is drawn from the window's top edge downward
-        // (y=0 at top) in wgpu coordinates. AppKit uses bottom-left
-        // origin for views; the button's origin.y is measured from the
-        // BOTTOM of its superview.
-        //
-        // We want: button top (in window top-down coords) at
-        //     desired_top = (bar_h - button_h) / 2
-        // Converting to AppKit parent coords (origin.y measured from
-        // the BOTTOM of the parent, which is flush with the titlebar's
-        // bottom inside the window):
-        //     origin.y = parent_h - button_h - desired_top
-        // We assume the parent (titlebar container) is anchored to
-        // the top of the window, so parent_bottom_in_window = parent_h.
         let frame = button.frame();
         let button_h = frame.size.height;
-        // SAFETY: superview is a standard NSView accessor; no state
-        // is mutated and the returned reference is released via arc.
-        let (parent_h, parent_y) = unsafe {
+        let parent_h = unsafe {
             button
                 .superview()
-                .map(|s| {
-                    let f = s.frame();
-                    (f.size.height, f.origin.y)
-                })
-                .unwrap_or((28.0, 0.0))
+                .map(|s| s.frame().size.height)
+                .unwrap_or(bar_h_f)
         };
         let bar_h = bar_height_logical_px as f64;
         let desired_top = ((bar_h - button_h) / 2.0).max(0.0);
