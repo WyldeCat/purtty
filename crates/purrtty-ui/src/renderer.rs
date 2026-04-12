@@ -146,7 +146,7 @@ impl Renderer {
     /// the line height so it scales with font zoom.
     pub fn tab_bar_height(&self) -> f32 {
         if self.tab_info.is_some() {
-            (self.line_height + 12.0).max(32.0)
+            (self.line_height + 18.0).max(38.0)
         } else {
             0.0
         }
