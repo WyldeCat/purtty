@@ -94,18 +94,17 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
             x: original_x,
             y: new_y,
         };
-        // SAFETY: setFrameOrigin: is a standard NSView method; the
-        // button pointer is valid as long as the window is alive.
+        // SAFETY: setFrameOrigin / setNeedsDisplay are standard NSView
+        // methods; the button pointer is valid while the window is alive.
         unsafe {
             button.setFrameOrigin(new_origin);
+            button.setNeedsDisplay();
+            // Also mark the parent (titlebar container) dirty so macOS
+            // actually redraws the buttons at their new positions.
+            if let Some(parent) = button.superview() {
+                parent.setNeedsDisplay(true);
+            }
         }
-        // Verify that the frame actually moved.
-        let after = button.frame();
-        info!(
-            ?kind,
-            after_y = after.origin.y,
-            "after reposition"
-        );
     }
 }
 
