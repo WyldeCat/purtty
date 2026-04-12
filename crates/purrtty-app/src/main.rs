@@ -212,6 +212,7 @@ impl PurrttyApp {
             .as_ref()
             .map(|r| r.tab_bar_height() / scale)
             .unwrap_or(40.0);
+        info!(bar_h, scale, "update_macos_traffic_lights");
         if let Some(window) = self.window.as_ref() {
             macos::reposition_traffic_lights(window, bar_h);
         }
@@ -934,6 +935,9 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                         warn!(?err, "pty resize failed");
                     }
                 }
+                // macOS may reset traffic-light positions during resize.
+                #[cfg(target_os = "macos")]
+                self.update_macos_traffic_lights();
                 self.redraw();
             }
             WindowEvent::RedrawRequested => {
