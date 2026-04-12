@@ -1047,41 +1047,52 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                         return;
                     }
                 };
-                // Build block overlay for the active session.
-                let render_block = self
-                    .sessions
-                    .get(self.active)
-                    .and_then(|s| s.block.as_ref())
-                    .and_then(|b| b.lock().ok())
-                    .map(|b| {
-                        let sb_len = guard.grid().scrollback_len();
-                        let rows = guard.grid().rows();
-                        let first_abs = sb_len.saturating_sub(scroll_offset.min(sb_len));
-                        let last_abs = first_abs + rows;
-                        // Map block rows into view coordinates.
-                        let blk_start = b.start_row;
-                        let blk_end = sb_len + guard.grid().cursor().row + 1;
-                        let start_view = blk_start.saturating_sub(first_abs).min(rows);
-                        let end_view = blk_end.saturating_sub(first_abs).min(rows);
-                        let _ = last_abs; // used in bounds check above
-                        purrtty_ui::RenderBlock {
-                            start_view_row: start_view,
-                            end_view_row: end_view,
-                            footer: b.footer_text(self.spinner_tick),
-                            state: match b.overlay_state() {
-                                block::BlockOverlayState::Active => 0,
-                                block::BlockOverlayState::Done => 1,
-                                block::BlockOverlayState::Error => 2,
-                            },
+                // Build block overlays from the grid's OSC 133 blocks.
+                let grid = guard.grid();
+                let sb_len = grid.scrollback_len();
+                let vis_rows = grid.rows();
+                let first_abs = sb_len.saturating_sub(scroll_offset.min(sb_len));
+                let grid_blocks = grid.blocks();
+                let cursor_abs = sb_len + grid.cursor().row;
+
+                let mut render_blocks: Vec<purrtty_ui::RenderBlock> = Vec::new();
+                for (i, blk) in grid_blocks.iter().enumerate() {
+                    let blk_start = blk.start_row;
+                    // Block ends where the next block starts, or at the cursor.
+                    let blk_end = grid_blocks
+                        .get(i + 1)
+                        .map(|next| next.start_row)
+                        .unwrap_or(cursor_abs + 1);
+                    // Map to view rows.
+                    if blk_end <= first_abs || blk_start >= first_abs + vis_rows {
+                        continue; // entirely outside viewport
+                    }
+                    let start_view = blk_start.saturating_sub(first_abs).min(vis_rows);
+                    let end_view = blk_end.saturating_sub(first_abs).min(vis_rows);
+                    if end_view <= start_view {
+                        continue;
+                    }
+                    let state = match blk.state {
+                        purrtty_term::grid::TermBlockState::Input => 3, // dim default
+                        purrtty_term::grid::TermBlockState::Running => 0, // blue active
+                        purrtty_term::grid::TermBlockState::Done { exit_code } => {
+                            if exit_code == 0 { 1 } else { 2 } // gray or red
                         }
+                    };
+                    render_blocks.push(purrtty_ui::RenderBlock {
+                        start_view_row: start_view,
+                        end_view_row: end_view,
+                        footer: String::new(),
+                        state,
                     });
+                }
 
                 if let Err(err) = renderer.render_with_overlays(
                     guard.grid(),
                     scroll_offset,
                     selection_range,
                     hover,
-                    render_block,
+                    &render_blocks,
                 ) {
                     warn!(?err, "render failed");
                 }

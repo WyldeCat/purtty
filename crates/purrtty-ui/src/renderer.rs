@@ -268,23 +268,13 @@ impl Renderer {
         scroll_offset: usize,
         selection: Option<((usize, usize), (usize, usize))>,
         hovered_url: Option<(usize, usize, usize)>,
-        block: Option<RenderBlock>,
+        blocks: &[RenderBlock],
     ) -> Result<()> {
-        self.render_impl(grid, scroll_offset, selection, hovered_url, block)
-    }
-
-    pub fn render_with_selection(
-        &mut self,
-        grid: &Grid,
-        scroll_offset: usize,
-        selection: Option<((usize, usize), (usize, usize))>,
-        hovered_url: Option<(usize, usize, usize)>,
-    ) -> Result<()> {
-        self.render_impl(grid, scroll_offset, selection, hovered_url, None)
+        self.render_impl(grid, scroll_offset, selection, hovered_url, blocks)
     }
 
     pub fn render(&mut self, grid: &Grid, scroll_offset: usize) -> Result<()> {
-        self.render_impl(grid, scroll_offset, None, None, None)
+        self.render_impl(grid, scroll_offset, None, None, &[])
     }
 
     fn render_impl(
@@ -293,7 +283,7 @@ impl Renderer {
         scroll_offset: usize,
         selection: Option<((usize, usize), (usize, usize))>,
         hovered_url: Option<(usize, usize, usize)>,
-        block: Option<RenderBlock>,
+        blocks: &[RenderBlock],
     ) -> Result<()> {
         let rows = grid.rows();
         let cols = grid.cols();
@@ -437,17 +427,21 @@ impl Renderer {
             }
         }
 
-        // Block overlay: border + background tint + footer.
-        if let Some(blk) = &block {
+        // Block overlays: border + background tint + footer for each block.
+        for blk in blocks {
             if blk.end_view_row > blk.start_view_row {
                 let border_color = match blk.state {
-                    0 => [ // active: blue
+                    0 => [ // running: blue
                         srgb_to_linear(0.36), srgb_to_linear(0.63),
                         srgb_to_linear(1.0), 0.9,
                     ],
                     2 => [ // error: red
                         srgb_to_linear(0.85), srgb_to_linear(0.25),
                         srgb_to_linear(0.25), 0.9,
+                    ],
+                    3 => [ // input: subtle border
+                        srgb_to_linear(0.35), srgb_to_linear(0.35),
+                        srgb_to_linear(0.38), 0.5,
                     ],
                     _ => [ // done: dim gray
                         srgb_to_linear(0.40), srgb_to_linear(0.40),
@@ -457,6 +451,7 @@ impl Renderer {
                 let bg_tint = match blk.state {
                     0 => [srgb_to_linear(0.14), srgb_to_linear(0.16), srgb_to_linear(0.22), 0.3],
                     2 => [srgb_to_linear(0.22), srgb_to_linear(0.10), srgb_to_linear(0.10), 0.3],
+                    3 => [srgb_to_linear(0.11), srgb_to_linear(0.11), srgb_to_linear(0.13), 0.15],
                     _ => [srgb_to_linear(0.12), srgb_to_linear(0.12), srgb_to_linear(0.14), 0.2],
                 };
 
