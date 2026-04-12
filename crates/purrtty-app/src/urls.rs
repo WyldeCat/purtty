@@ -23,6 +23,12 @@ pub fn find_urls(text: &str) -> Vec<std::ops::Range<usize>> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
+        // Only attempt a match at UTF-8 char boundaries — slicing
+        // mid-character panics.
+        if !text.is_char_boundary(i) {
+            i += 1;
+            continue;
+        }
         // Try to match any scheme at position i.
         let Some(scheme) = SCHEMES.iter().find(|s| text[i..].starts_with(*s)) else {
             i += 1;
@@ -127,6 +133,23 @@ mod tests {
         // `https://` by itself has nothing after the scheme — not a URL.
         let urls = find_urls("prefix https:// suffix");
         assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn no_crash_on_multibyte_chars() {
+        // '⎿' is 3 bytes (U+23BF). Iterating byte-by-byte and slicing
+        // at non-char-boundaries used to panic.
+        let t = "  ⎿  2561845";
+        let urls = find_urls(t);
+        assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn url_among_multibyte_chars() {
+        let t = "看 https://example.com 看";
+        let urls = find_urls(t);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(&t[urls[0].clone()], "https://example.com");
     }
 
     #[test]
