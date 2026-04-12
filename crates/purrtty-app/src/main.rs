@@ -1047,11 +1047,41 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                         return;
                     }
                 };
-                if let Err(err) = renderer.render_with_selection(
+                // Build block overlay for the active session.
+                let render_block = self
+                    .sessions
+                    .get(self.active)
+                    .and_then(|s| s.block.as_ref())
+                    .and_then(|b| b.lock().ok())
+                    .map(|b| {
+                        let sb_len = guard.grid().scrollback_len();
+                        let rows = guard.grid().rows();
+                        let first_abs = sb_len.saturating_sub(scroll_offset.min(sb_len));
+                        let last_abs = first_abs + rows;
+                        // Map block rows into view coordinates.
+                        let blk_start = b.start_row;
+                        let blk_end = sb_len + guard.grid().cursor().row + 1;
+                        let start_view = blk_start.saturating_sub(first_abs).min(rows);
+                        let end_view = blk_end.saturating_sub(first_abs).min(rows);
+                        let _ = last_abs; // used in bounds check above
+                        purrtty_ui::RenderBlock {
+                            start_view_row: start_view,
+                            end_view_row: end_view,
+                            footer: b.footer_text(self.spinner_tick),
+                            state: match b.overlay_state() {
+                                block::BlockOverlayState::Active => 0,
+                                block::BlockOverlayState::Done => 1,
+                                block::BlockOverlayState::Error => 2,
+                            },
+                        }
+                    });
+
+                if let Err(err) = renderer.render_with_overlays(
                     guard.grid(),
                     scroll_offset,
                     selection_range,
                     hover,
+                    render_block,
                 ) {
                     warn!(?err, "render failed");
                 }

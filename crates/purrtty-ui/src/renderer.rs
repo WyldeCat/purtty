@@ -31,6 +31,20 @@ const PAD_Y: f32 = 16.0;
 #[cfg(not(target_os = "macos"))]
 const TAB_BAR_LEFT_INSET_DEFAULT: f32 = 0.0;
 
+/// Block overlay info for rendering a bordered agent block.
+/// View-row coordinates (0 = top of visible grid, after tab bar).
+#[derive(Debug, Clone)]
+pub struct RenderBlock {
+    /// First visible row of the block (0 if block starts above viewport).
+    pub start_view_row: usize,
+    /// Last visible row of the block + 1.
+    pub end_view_row: usize,
+    /// Footer text (spinner + status + elapsed).
+    pub footer: String,
+    /// 0 = active (blue), 1 = done (gray), 2 = error (red).
+    pub state: u8,
+}
+
 /// Rectangles for a single tab in the tab bar, used for mouse
 /// hit-testing. All coordinates are physical pixels relative to the
 /// top-left of the window surface.
@@ -247,13 +261,18 @@ impl Renderer {
         Some(self.grid_dimensions())
     }
 
-    /// Optional selection highlight range expressed in absolute row
-    /// coordinates (scrollback + live rows, row 0 = oldest scrollback).
-    /// `end` is exclusive — the last selected cell is `(end_row, end_col - 1)`.
-    ///
-    /// `hovered_url` highlights a URL currently under the mouse in
-    /// view-row coordinates `(view_row, start_col, end_col)` so the
-    /// renderer can paint it in a link color with an underline.
+    /// Block overlay info passed from the app to the renderer.
+    pub fn render_with_overlays(
+        &mut self,
+        grid: &Grid,
+        scroll_offset: usize,
+        selection: Option<((usize, usize), (usize, usize))>,
+        hovered_url: Option<(usize, usize, usize)>,
+        block: Option<RenderBlock>,
+    ) -> Result<()> {
+        self.render_impl(grid, scroll_offset, selection, hovered_url, block)
+    }
+
     pub fn render_with_selection(
         &mut self,
         grid: &Grid,
@@ -261,11 +280,11 @@ impl Renderer {
         selection: Option<((usize, usize), (usize, usize))>,
         hovered_url: Option<(usize, usize, usize)>,
     ) -> Result<()> {
-        self.render_impl(grid, scroll_offset, selection, hovered_url)
+        self.render_impl(grid, scroll_offset, selection, hovered_url, None)
     }
 
     pub fn render(&mut self, grid: &Grid, scroll_offset: usize) -> Result<()> {
-        self.render_impl(grid, scroll_offset, None, None)
+        self.render_impl(grid, scroll_offset, None, None, None)
     }
 
     fn render_impl(
@@ -274,6 +293,7 @@ impl Renderer {
         scroll_offset: usize,
         selection: Option<((usize, usize), (usize, usize))>,
         hovered_url: Option<(usize, usize, usize)>,
+        block: Option<RenderBlock>,
     ) -> Result<()> {
         let rows = grid.rows();
         let cols = grid.cols();
@@ -414,6 +434,72 @@ impl Renderer {
                 let y = grid_top + view_idx as f32 * line_h;
                 let w = (row_end - row_start) as f32 * cell_w;
                 QuadRenderer::push_rect(&mut overlay_verts, x, y, w, line_h, select_color);
+            }
+        }
+
+        // Block overlay: border + background tint + footer.
+        if let Some(blk) = &block {
+            if blk.end_view_row > blk.start_view_row {
+                let border_color = match blk.state {
+                    0 => [ // active: blue
+                        srgb_to_linear(0.36), srgb_to_linear(0.63),
+                        srgb_to_linear(1.0), 0.9,
+                    ],
+                    2 => [ // error: red
+                        srgb_to_linear(0.85), srgb_to_linear(0.25),
+                        srgb_to_linear(0.25), 0.9,
+                    ],
+                    _ => [ // done: dim gray
+                        srgb_to_linear(0.40), srgb_to_linear(0.40),
+                        srgb_to_linear(0.42), 0.7,
+                    ],
+                };
+                let bg_tint = match blk.state {
+                    0 => [srgb_to_linear(0.14), srgb_to_linear(0.16), srgb_to_linear(0.22), 0.3],
+                    2 => [srgb_to_linear(0.22), srgb_to_linear(0.10), srgb_to_linear(0.10), 0.3],
+                    _ => [srgb_to_linear(0.12), srgb_to_linear(0.12), srgb_to_linear(0.14), 0.2],
+                };
+
+                let bx = PAD_X - 4.0;
+                let by = grid_top + blk.start_view_row as f32 * line_h - 2.0;
+                let bw = (cols as f32 * cell_w) + 8.0;
+                let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h + 4.0;
+                let border_w = 2.0_f32;
+
+                // Background tint.
+                QuadRenderer::push_rect(&mut bg_verts, bx, by, bw, bh, bg_tint);
+                // Top border.
+                QuadRenderer::push_rect(&mut overlay_verts, bx, by, bw, border_w, border_color);
+                // Bottom border.
+                QuadRenderer::push_rect(&mut overlay_verts, bx, by + bh - border_w, bw, border_w, border_color);
+                // Left border.
+                QuadRenderer::push_rect(&mut overlay_verts, bx, by, border_w, bh, border_color);
+                // Right border.
+                QuadRenderer::push_rect(&mut overlay_verts, bx + bw - border_w, by, border_w, bh, border_color);
+
+                // Footer text — rendered at the bottom row of the block.
+                let footer_y = by + bh - line_h - 2.0;
+                let footer_x = bx + 8.0;
+                let footer_color = border_color;
+                let mut fx = footer_x;
+                for ch in blk.footer.chars() {
+                    if fx + cell_w > bx + bw - 8.0 {
+                        break;
+                    }
+                    if let Some(entry) =
+                        self.glyphs.get_or_insert(ch, &self.device, &self.queue)
+                    {
+                        GlyphCache::push_glyph(
+                            &mut glyph_verts,
+                            &entry,
+                            fx,
+                            footer_y,
+                            ascent,
+                            footer_color,
+                        );
+                        fx += cell_w;
+                    }
+                }
             }
         }
 
