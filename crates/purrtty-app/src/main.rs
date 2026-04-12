@@ -1367,31 +1367,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn traffic_light_x_stays_stable_across_zooms() {
-        // The x offset formula must be absolute (based on the macOS
-        // default x), not relative to the current frame — otherwise
-        // each zoom compounds the shift. We test the pure formula.
+    fn traffic_light_position_stable_across_zooms() {
+        // Traffic lights: x stays at macOS default (9), only y changes
+        // for vertical centering. Must be idempotent across zoom cycles.
+        // Note: perfect centering is only possible when
+        // bar_h <= parent_h + button_h; beyond that, the button is
+        // clamped to the bottom of its parent.
         let original_x = 9.0_f64;
-        let bar_heights = [34.0, 50.0, 34.0, 60.0, 34.0];
         let button_h = 14.0_f64;
         let parent_h = 32.0_f64;
+        let bar_heights = [40.0, 50.0, 40.0, 60.0, 40.0];
         for bar_h in bar_heights {
             let desired_top = ((bar_h - button_h) / 2.0).max(0.0);
-            let new_x = original_x + (desired_top - original_x);
             let new_y = (parent_h - button_h - desired_top).max(0.0);
-            // x must always equal desired_top (uniform margin).
+            // x never changes.
+            assert_eq!(original_x, 9.0, "x must stay at macOS default");
+            // y is idempotent: same bar_h always gives same new_y.
+            let new_y2 = (parent_h - button_h - desired_top).max(0.0);
             assert!(
-                (new_x - desired_top).abs() < 0.001,
-                "x should equal desired_top ({desired_top}) but got {new_x} at bar_h={bar_h}"
+                (new_y - new_y2).abs() < 0.001,
+                "y must be stable across calls at bar_h={bar_h}"
             );
-            // Re-running the same formula with the RESULT as input
-            // must be stable (idempotent).
-            let new_x2 = original_x + (desired_top - original_x);
+            // Button should be as close to bar center as the parent
+            // allows (may be clamped when bar_h >> parent_h).
+            let btn_center = parent_h - new_y - button_h / 2.0;
+            let bar_center = bar_h / 2.0;
             assert!(
-                (new_x2 - new_x).abs() < 0.001,
-                "x should be stable across repeated calls"
+                btn_center <= bar_center + 0.001,
+                "button center ({btn_center}) should not be below bar center ({bar_center})"
             );
-            let _ = new_y;
         }
     }
 

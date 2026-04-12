@@ -88,14 +88,11 @@ pub fn reposition_traffic_lights(window: &Window, bar_height_logical_px: f32) {
             new_y,
             "repositioning traffic light"
         );
-        // Shift x so the left-edge padding matches the top-edge
-        // padding, giving uniform inset on both axes. Computed from
-        // the ORIGINAL macOS default position, not the live frame,
-        // so repeated calls (zoom in → zoom out) are idempotent.
-        let x_offset = desired_top - DEFAULT_X[0];
-        let new_x = original_x + x_offset;
+        // Keep x at the macOS default — traffic lights always sit
+        // near the top-left corner regardless of bar height. Only y
+        // is adjusted for vertical centering.
         let new_origin = NSPoint {
-            x: new_x,
+            x: original_x,
             y: new_y,
         };
         // SAFETY: setFrameOrigin: is a standard NSView method; the
