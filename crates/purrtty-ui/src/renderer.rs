@@ -348,9 +348,19 @@ impl Renderer {
             .filter(|b| b.start_view_row > 0 && b.start_view_row < rows)
             .map(|b| b.start_view_row)
             .collect();
-        let total_padding = block_boundaries.len() as f32 * block_pad;
+        // Shift grid_top up by the padding accumulated at the LAST
+        // visible row — this anchors the bottom of the grid (where
+        // the cursor/prompt lives) at its natural position. Using
+        // total_padding was wrong: it shifted row 0 above the
+        // viewport even when the cursor was near the top.
+        let last_row = rows.saturating_sub(1);
+        let bottom_offset = block_boundaries
+            .iter()
+            .filter(|&&s| s <= last_row)
+            .count() as f32
+            * block_pad;
         let layout = FrameLayout {
-            grid_top: base_grid_top - total_padding,
+            grid_top: base_grid_top - bottom_offset,
             line_h,
             cell_w,
             ascent,
