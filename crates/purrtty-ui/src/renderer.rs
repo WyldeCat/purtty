@@ -289,6 +289,77 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Dump the visual layout of a frame as text — what rows are
+    /// visible, their Y positions, and content. Used for automated
+    /// testing without GPU/screenshot access.
+    pub fn frame_dump(
+        &self,
+        grid: &Grid,
+        scroll_offset: usize,
+        blocks: &[RenderBlock],
+    ) -> String {
+        let rows = grid.rows();
+        let cols = grid.cols();
+        let line_h = self.line_height;
+        let tab_h = self.tab_bar_height();
+        let base_grid_top = PAD_Y + tab_h;
+        let block_pad_raw = (line_h * 0.5).max(8.0);
+        let block_boundaries: Vec<usize> = blocks
+            .iter()
+            .filter(|b| b.start_view_row > 0 && b.start_view_row < rows)
+            .map(|b| b.start_view_row)
+            .collect();
+        let grid_area_h = rows as f32 * line_h;
+        let max_padding = grid_area_h * 0.25;
+        let raw_count = block_boundaries
+            .iter()
+            .filter(|&&s| s <= rows.saturating_sub(1))
+            .count();
+        let raw_padding = raw_count as f32 * block_pad_raw;
+        let capped = raw_padding.min(max_padding);
+        let eff_pad = if raw_count > 0 {
+            capped / raw_count as f32
+        } else {
+            block_pad_raw
+        };
+        let grid_top = base_grid_top - capped;
+        let min_y = base_grid_top;
+
+        let row_y = |vr: usize| -> f32 {
+            let n = block_boundaries.iter().filter(|&&s| s <= vr).count();
+            grid_top + vr as f32 * line_h + n as f32 * eff_pad
+        };
+
+        let mut out = format!(
+            "rows={rows} cols={cols} blocks={} boundaries={:?}\n\
+             base_grid_top={base_grid_top} grid_top={grid_top} eff_pad={eff_pad:.1}\n\
+             cursor=({},{})\n---\n",
+            blocks.len(),
+            block_boundaries,
+            grid.cursor().row,
+            grid.cursor().col,
+        );
+        for vr in 0..rows {
+            let y = row_y(vr);
+            let vis = y + line_h >= min_y;
+            let mut text = String::new();
+            if let Some(row) = grid.row_at(vr, scroll_offset) {
+                for cell in row.iter().take(40) {
+                    if cell.ch != '\0' {
+                        text.push(cell.ch);
+                    }
+                }
+            }
+            let text = text.trim_end();
+            let marker = if vr == grid.cursor().row { " <<<CURSOR" } else { "" };
+            let sep = if block_boundaries.contains(&vr) { " [SEP]" } else { "" };
+            out += &format!(
+                "row {vr:2}: y={y:6.1} vis={vis}{sep} |{text}|{marker}\n"
+            );
+        }
+        out
+    }
+
     pub fn current_font_size(&self) -> f32 {
         self.glyphs.font_size()
     }

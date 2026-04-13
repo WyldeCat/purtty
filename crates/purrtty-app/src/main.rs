@@ -1087,14 +1087,15 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                     });
                 }
 
-                // Debug: log block layout once per unique state change.
-                if !render_blocks.is_empty() {
-                    tracing::debug!(
-                        blocks = render_blocks.len(),
-                        cursor_row = guard.grid().cursor().row,
-                        cursor_col = guard.grid().cursor().col,
-                        "redraw with blocks"
+                // Headless frame dump: write visual layout to file
+                // when PURRTTY_DUMP env var is set.
+                if std::env::var("PURRTTY_DUMP").is_ok() {
+                    let dump = renderer.frame_dump(
+                        guard.grid(),
+                        scroll_offset,
+                        &render_blocks,
                     );
+                    let _ = std::fs::write("/tmp/purrtty_frame.txt", &dump);
                 }
 
                 if let Err(err) = renderer.render_with_overlays(
