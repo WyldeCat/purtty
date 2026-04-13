@@ -297,8 +297,9 @@ impl Renderer {
         let mut bg_verts: Vec<QuadVertex> = Vec::new();
 
         // Pre-compute block boundary view-rows for Y-offset. Each
-        // boundary inserts visual spacing so blocks don't run together.
-        let block_pad = (line_h * 0.4).max(6.0);
+        // boundary inserts visual spacing: top padding (above separator)
+        // + bottom padding (below separator).
+        let block_pad = (line_h * 0.7).max(12.0);
         let block_boundary_rows: Vec<usize> = blocks
             .iter()
             .filter(|b| b.start_view_row > 0 && b.start_view_row < rows)
@@ -472,13 +473,14 @@ impl Renderer {
                 + y_offset_for_row(blk.end_view_row.saturating_sub(1));
             let bh = by_end - by + line_h;
 
-            // Horizontal separator at the TOP of each block (except
-            // the very first visible block — it's at the top already).
+            // Horizontal separator centered in the padding gap between
+            // this block and the previous one.
             if blk.start_view_row > 0 {
+                let sep_y = by - block_pad * 0.5;
                 QuadRenderer::push_rect(
                     &mut overlay_verts,
                     grid_left,
-                    by - 0.5,
+                    sep_y,
                     grid_w,
                     1.0,
                     separator_color,
