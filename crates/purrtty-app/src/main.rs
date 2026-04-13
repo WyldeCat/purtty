@@ -1087,15 +1087,36 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                     });
                 }
 
-                // Headless frame dump: write visual layout to file
-                // when PURRTTY_DUMP env var is set.
+                // Headless frame dump: detect "empty cursor row" bug.
+                // When PURRTTY_DUMP is set, append EVERY frame where
+                // the cursor row has no text — catches the exact frame
+                // where the prompt is missing.
                 if std::env::var("PURRTTY_DUMP").is_ok() {
+                    let cursor_row = guard.grid().cursor().row;
+                    let mut has_text = false;
+                    if let Some(row) = guard.grid().row_at(cursor_row, 0) {
+                        has_text = row.iter().any(|c| c.ch != ' ' && c.ch != '\0');
+                    }
                     let dump = renderer.frame_dump(
                         guard.grid(),
                         scroll_offset,
                         &render_blocks,
                     );
+                    // Always write latest frame.
                     let _ = std::fs::write("/tmp/purrtty_frame.txt", &dump);
+                    // Append "bad" frames to a separate log.
+                    if !has_text {
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/purrtty_bad_frames.txt")
+                        {
+                            let _ = writeln!(f, "=== EMPTY CURSOR ROW ===");
+                            let _ = f.write_all(dump.as_bytes());
+                            let _ = writeln!(f);
+                        }
+                    }
                 }
 
                 if let Err(err) = renderer.render_with_overlays(
