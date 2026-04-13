@@ -146,8 +146,8 @@ impl Default for RendererConfig {
     fn default() -> Self {
         Self {
             font_family: None,
-            font_size: 18.0,
-            line_height: 22.0,
+            font_size: 20.0,
+            line_height: 24.0,
             theme: Theme::default(),
         }
     }

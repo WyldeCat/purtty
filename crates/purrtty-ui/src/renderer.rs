@@ -444,12 +444,14 @@ impl Renderer {
         let grid_left = PAD_X - 4.0;
         let grid_w = cols as f32 * cell_w + 8.0;
 
+        let block_pad_y = (line_h * 0.3).max(4.0);
+
         for blk in blocks {
             if blk.end_view_row <= blk.start_view_row {
                 continue;
             }
-            let by = grid_top + blk.start_view_row as f32 * line_h;
-            let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h;
+            let by = grid_top + blk.start_view_row as f32 * line_h - block_pad_y;
+            let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h + block_pad_y * 2.0;
 
             // Horizontal separator at the TOP of each block (except
             // the very first visible block — it's at the top already).
@@ -467,7 +469,6 @@ impl Renderer {
             // Left accent bar for errors (red) or running (blue).
             match blk.state {
                 2 => {
-                    // Error: red left accent bar.
                     QuadRenderer::push_rect(
                         &mut overlay_verts,
                         grid_left,
@@ -478,7 +479,6 @@ impl Renderer {
                     );
                 }
                 0 => {
-                    // Running: blue left accent bar.
                     QuadRenderer::push_rect(
                         &mut overlay_verts,
                         grid_left,

@@ -52,8 +52,8 @@ impl Default for FontSection {
     fn default() -> Self {
         Self {
             family: None,
-            size: 18.0,
-            line_height: 22.0,
+            size: 20.0,
+            line_height: 24.0,
         }
     }
 }
