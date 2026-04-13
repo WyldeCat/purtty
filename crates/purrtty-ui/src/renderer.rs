@@ -31,6 +31,54 @@ const PAD_Y: f32 = 16.0;
 #[cfg(not(target_os = "macos"))]
 const TAB_BAR_LEFT_INSET_DEFAULT: f32 = 0.0;
 
+/// Per-frame layout metrics. Computes row Y positions accounting for
+/// tab bar offset and block padding. Every rendering path should use
+/// `row_y()` instead of computing positions ad-hoc — that's what
+/// caused the separator-misalignment bug.
+struct FrameLayout {
+    /// Grid top Y after tab bar, shifted up by total block padding.
+    grid_top: f32,
+    line_h: f32,
+    cell_w: f32,
+    ascent: f32,
+    rows: usize,
+    cols: usize,
+    block_pad: f32,
+    block_boundaries: Vec<usize>,
+    /// Top-clip boundary: rows above this Y are not visible (clipped
+    /// because grid_top was shifted up for bottom-anchoring).
+    min_y: f32,
+    /// Left edge of the content area (for separators / overlays).
+    grid_left: f32,
+    /// Width of the content area.
+    grid_width: f32,
+}
+
+impl FrameLayout {
+    /// Y position of a grid row, including block padding offset.
+    fn row_y(&self, view_row: usize) -> f32 {
+        let n = self
+            .block_boundaries
+            .iter()
+            .filter(|&&s| s <= view_row)
+            .count();
+        self.grid_top + view_row as f32 * self.line_h + n as f32 * self.block_pad
+    }
+
+    /// Whether a row is visible (not clipped above the viewport).
+    fn is_row_visible(&self, view_row: usize) -> bool {
+        self.row_y(view_row) + self.line_h >= self.min_y
+    }
+
+    /// Cell position: `(x, y)`.
+    fn cell_xy(&self, view_row: usize, col: usize) -> (f32, f32) {
+        (
+            PAD_X + col as f32 * self.cell_w,
+            self.row_y(view_row),
+        )
+    }
+}
+
 /// Block overlay info for rendering a bordered agent block.
 /// View-row coordinates (0 = top of visible grid, after tab bar).
 #[derive(Debug, Clone)]
@@ -291,32 +339,32 @@ impl Renderer {
         let line_h = self.line_height;
         let ascent = self.glyphs.ascent;
         let tab_h = self.tab_bar_height();
-        let grid_top = PAD_Y + tab_h;
+        let base_grid_top = PAD_Y + tab_h;
 
-        let mut glyph_verts: Vec<GlyphVertex> = Vec::with_capacity(rows * cols);
-        let mut bg_verts: Vec<QuadVertex> = Vec::new();
-
-        // Block boundary padding: each boundary inserts visual space.
-        // To keep the BOTTOM (prompt) visible, we shift grid_top UP
-        // by the total padding. Each boundary's offset pushes rows
-        // back down. Net result: bottom rows stay at natural Y,
-        // top rows shift above the viewport (clipped at top).
+        // Build the frame layout: centralizes ALL Y-coordinate math.
         let block_pad = (line_h * 0.5).max(8.0);
-        let block_boundary_rows: Vec<usize> = blocks
+        let block_boundaries: Vec<usize> = blocks
             .iter()
             .filter(|b| b.start_view_row > 0 && b.start_view_row < rows)
             .map(|b| b.start_view_row)
             .collect();
-        let total_block_padding = block_boundary_rows.len() as f32 * block_pad;
-        let grid_top = grid_top - total_block_padding;
-        let y_offset_for_row = |view_row: usize| -> f32 {
-            let n = block_boundary_rows
-                .iter()
-                .filter(|&&s| s <= view_row)
-                .count();
-            n as f32 * block_pad
+        let total_padding = block_boundaries.len() as f32 * block_pad;
+        let layout = FrameLayout {
+            grid_top: base_grid_top - total_padding,
+            line_h,
+            cell_w,
+            ascent,
+            rows,
+            cols,
+            block_pad,
+            block_boundaries,
+            min_y: base_grid_top,
+            grid_left: PAD_X - 4.0,
+            grid_width: cols as f32 * cell_w + 8.0,
         };
-        let min_y = PAD_Y + self.tab_bar_height();
+
+        let mut glyph_verts: Vec<GlyphVertex> = Vec::with_capacity(rows * cols);
+        let mut bg_verts: Vec<QuadVertex> = Vec::new();
 
         // Link accent color for hovered URLs.
         let link_color = [
@@ -326,12 +374,9 @@ impl Renderer {
             1.0,
         ];
 
+        // ── Grid cells ──
         for view_idx in 0..rows {
-            let row_y = grid_top + view_idx as f32 * line_h + y_offset_for_row(view_idx);
-            // Clip: skip rows pushed ABOVE the viewport by the
-            // upward grid_top shift. Bottom rows (prompt) always
-            // stay visible.
-            if row_y + line_h < min_y {
+            if !layout.is_row_visible(view_idx) {
                 continue;
             }
             let row = grid.row_at(view_idx, scroll_offset).unwrap_or(&[]);
@@ -351,9 +396,7 @@ impl Renderer {
                     Some((s, e)) if col_idx >= s && col_idx < e => link_color,
                     _ => base_fg,
                 };
-                let cell_x = PAD_X + col_idx as f32 * cell_w;
-                let cell_y = grid_top + view_idx as f32 * line_h
-                    + y_offset_for_row(view_idx);
+                let (cell_x, cell_y) = layout.cell_xy(view_idx, col_idx);
 
                 // Background quad.
                 if let Some(bg) = bg_opt {
@@ -385,15 +428,13 @@ impl Renderer {
             }
         }
 
-        // Cursor quad.
+        // ── Cursor ──
         let mut overlay_verts: Vec<QuadVertex> = Vec::new();
         if grid.cursor_visible() && scroll_offset == 0 {
             let cursor = grid.cursor();
             if cursor.row < rows && cols > 0 {
                 let col = cursor.col.min(cols - 1);
-                let x = PAD_X + col as f32 * cell_w;
-                let y = grid_top + cursor.row as f32 * line_h
-                    + y_offset_for_row(cursor.row);
+                let (x, y) = layout.cell_xy(cursor.row, col);
                 let cursor_gray = srgb_to_linear(0.85);
                 QuadRenderer::push_rect(
                     &mut overlay_verts,
@@ -406,13 +447,11 @@ impl Renderer {
             }
         }
 
-        // Hovered-URL underline. Drawn as a 2px line at the bottom of
-        // the hovered cells, using the same link accent color.
+        // ── URL hover underline ──
         if let Some((view_row, start_col, end_col)) = hovered_url {
             if view_row < rows && start_col < cols && end_col <= cols && end_col > start_col {
                 let x = PAD_X + start_col as f32 * cell_w;
-                let y = grid_top + view_row as f32 * line_h
-                    + y_offset_for_row(view_row) + line_h - 2.0;
+                let y = layout.row_y(view_row) + line_h - 2.0;
                 let w = (end_col - start_col) as f32 * cell_w;
                 QuadRenderer::push_rect(
                     &mut overlay_verts,
@@ -450,8 +489,7 @@ impl Renderer {
                     continue;
                 }
                 let x = PAD_X + row_start as f32 * cell_w;
-                let y = grid_top + view_idx as f32 * line_h
-                    + y_offset_for_row(view_idx);
+                let y = layout.row_y(view_idx);
                 let w = (row_end - row_start) as f32 * cell_w;
                 QuadRenderer::push_rect(&mut overlay_verts, x, y, w, line_h, select_color);
             }
@@ -471,24 +509,22 @@ impl Renderer {
             srgb_to_linear(0.25),
             0.9,
         ];
-        let grid_left = PAD_X - 4.0;
-        let grid_w = cols as f32 * cell_w + 8.0;
-
+        // ── Block overlays ──
         for blk in blocks {
             if blk.end_view_row <= blk.start_view_row {
                 continue;
             }
-            let by = grid_top + blk.start_view_row as f32 * line_h;
-            let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h;
+            let by = layout.row_y(blk.start_view_row);
+            let by_end = layout.row_y(blk.end_view_row.saturating_sub(1));
+            let bh = by_end - by + line_h;
 
-            // Thin separator line between blocks. Uses `by` which
-            // already includes the Y-offset from block padding.
+            // Thin separator line between blocks.
             if blk.start_view_row > 0 {
                 QuadRenderer::push_rect(
                     &mut bg_verts,
-                    grid_left,
+                    layout.grid_left,
                     by - 1.0,
-                    grid_w,
+                    layout.grid_width,
                     1.0,
                     separator_color,
                 );
@@ -499,7 +535,7 @@ impl Renderer {
                 2 => {
                     QuadRenderer::push_rect(
                         &mut overlay_verts,
-                        grid_left,
+                        layout.grid_left,
                         by,
                         3.0,
                         bh,
@@ -509,7 +545,7 @@ impl Renderer {
                 0 => {
                     QuadRenderer::push_rect(
                         &mut overlay_verts,
-                        grid_left,
+                        layout.grid_left,
                         by,
                         3.0,
                         bh,
@@ -522,7 +558,7 @@ impl Renderer {
             // Footer text (only if non-empty).
             if !blk.footer.is_empty() {
                 let footer_y = by + bh - line_h;
-                let footer_x = grid_left + 8.0;
+                let footer_x = layout.grid_left + 8.0;
                 let footer_color = match blk.state {
                     2 => error_accent,
                     0 => link_color,
@@ -530,7 +566,7 @@ impl Renderer {
                 };
                 let mut fx = footer_x;
                 for ch in blk.footer.chars() {
-                    if fx + cell_w > grid_left + grid_w - 8.0 {
+                    if fx + cell_w > layout.grid_left + layout.grid_width - 8.0 {
                         break;
                     }
                     if let Some(entry) =
