@@ -296,15 +296,19 @@ impl Renderer {
         let mut glyph_verts: Vec<GlyphVertex> = Vec::with_capacity(rows * cols);
         let mut bg_verts: Vec<QuadVertex> = Vec::new();
 
-        // Block boundary padding: each boundary pushes subsequent rows
-        // down by block_pad pixels. Rows whose offset pushes them
-        // below the window are clipped (not rendered).
+        // Block boundary padding: each boundary inserts visual space.
+        // To keep the BOTTOM (prompt) visible, we shift grid_top UP
+        // by the total padding. Each boundary's offset pushes rows
+        // back down. Net result: bottom rows stay at natural Y,
+        // top rows shift above the viewport (clipped at top).
         let block_pad = (line_h * 0.5).max(8.0);
         let block_boundary_rows: Vec<usize> = blocks
             .iter()
             .filter(|b| b.start_view_row > 0 && b.start_view_row < rows)
             .map(|b| b.start_view_row)
             .collect();
+        let total_block_padding = block_boundary_rows.len() as f32 * block_pad;
+        let grid_top = grid_top - total_block_padding;
         let y_offset_for_row = |view_row: usize| -> f32 {
             let n = block_boundary_rows
                 .iter()
@@ -312,7 +316,7 @@ impl Renderer {
                 .count();
             n as f32 * block_pad
         };
-        let max_y = self.config.height as f32;
+        let min_y = PAD_Y + self.tab_bar_height();
 
         // Link accent color for hovered URLs.
         let link_color = [
@@ -324,9 +328,11 @@ impl Renderer {
 
         for view_idx in 0..rows {
             let row_y = grid_top + view_idx as f32 * line_h + y_offset_for_row(view_idx);
-            // Clip: skip rows pushed below the window by block padding.
-            if row_y + line_h > max_y {
-                break;
+            // Clip: skip rows pushed ABOVE the viewport by the
+            // upward grid_top shift. Bottom rows (prompt) always
+            // stay visible.
+            if row_y + line_h < min_y {
+                continue;
             }
             let row = grid.row_at(view_idx, scroll_offset).unwrap_or(&[]);
             let hover_in_row = hovered_url.and_then(|(r, s, e)| {

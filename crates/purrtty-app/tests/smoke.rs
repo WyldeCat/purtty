@@ -268,6 +268,43 @@ fn korean_line_wrap() {
 //
 // These tests reproduce the conditions that cause the blank initial render.
 
+/// Pressing Enter on an empty prompt should produce a new prompt.
+/// Reproduces a bug where the new prompt didn't appear after OSC 133
+/// shell integration was enabled.
+#[test]
+fn empty_enter_shows_new_prompt() {
+    let terminal = run_shell(24, 80, &[], Duration::from_secs(2));
+
+    // Verify the first prompt is there.
+    let r0 = row_text(&terminal, 0);
+    assert!(
+        r0.contains('%') || r0.contains('$') || r0.contains('#'),
+        "initial prompt should be visible, got: {r0:?}"
+    );
+
+    // Now send Enter (empty command) and wait for a new prompt.
+    // We use run_shell with an empty string command to simulate this.
+    let terminal2 = run_shell(24, 80, &[""], Duration::from_secs(2));
+
+    // There should be at least 2 rows with prompt-like characters
+    // (the initial prompt + the echoed empty command + new prompt).
+    let prompt_rows: Vec<usize> = (0..24)
+        .filter(|&r| {
+            let text = row_text(&terminal2, r);
+            text.contains('%') || text.contains('$') || text.contains('#')
+        })
+        .collect();
+    assert!(
+        prompt_rows.len() >= 2,
+        "expected at least 2 prompt rows after empty Enter, found {} in:\n{}",
+        prompt_rows.len(),
+        (0..24)
+            .map(|r| format!("  row {r}: {:?}", row_text(&terminal2, r)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 /// Helper: read row 0 of the grid as a trimmed string.
 fn grid_row0_text(terminal: &Arc<Mutex<Terminal>>) -> String {
     let term = terminal.lock().unwrap();
