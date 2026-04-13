@@ -51,6 +51,9 @@ enum UserEvent {
     /// Periodic tick (~100ms) while an agent block is active, driving
     /// the spinner animation and elapsed-time update in the footer.
     StatusTick { session_id: u64 },
+    /// Debounced PTY redraw. Only the one matching the latest
+    /// `pty_redraw_seq` actually renders; earlier ones are stale.
+    PtyRedraw { seq: u64 },
 }
 
 /// Keyboard input routing state.
@@ -162,6 +165,10 @@ struct PurrttyApp {
     /// Monotonic tick counter for the block footer spinner animation.
     /// Incremented by StatusTick events.
     spinner_tick: usize,
+    /// Debounce counter for PtyDataArrived → redraw coalescing.
+    /// Each PtyDataArrived increments this and schedules a delayed
+    /// redraw carrying the counter. Only the latest fires.
+    pty_redraw_seq: u64,
 }
 
 /// Approximate cell line height for turning pixel scroll deltas into rows.
@@ -902,17 +909,27 @@ impl ApplicationHandler<UserEvent> for PurrttyApp {
                         let _ = session.pty.write(&resp);
                     }
                 }
-                // Debounced redraw: instead of rendering every
-                // intermediate PTY state (which flashes empty rows
-                // between OSC marks and prompt text), schedule a
-                // redraw 8ms from now. Rapid PtyDataArrived events
-                // coalesce into one render showing the final state.
+                // Debounced redraw: increment the sequence counter
+                // and schedule a delayed PtyRedraw. Only the LATEST
+                // one renders — earlier ones see a stale seq and
+                // skip. This coalesces rapid PTY updates (OSC marks
+                // + \r\n + prompt text) into one render.
                 if idx == self.active {
+                    self.pty_redraw_seq = self.pty_redraw_seq.wrapping_add(1);
+                    let seq = self.pty_redraw_seq;
                     let proxy = self.proxy.clone().unwrap();
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(8));
-                        let _ = proxy.send_event(UserEvent::DeferredRedraw);
+                        std::thread::sleep(std::time::Duration::from_millis(16));
+                        let _ = proxy.send_event(UserEvent::PtyRedraw { seq });
                     });
+                }
+            }
+            UserEvent::PtyRedraw { seq } => {
+                // Only render if this is the latest scheduled redraw.
+                // Earlier ones are stale — a newer PtyDataArrived
+                // already scheduled a fresher render.
+                if seq == self.pty_redraw_seq {
+                    self.redraw();
                 }
             }
             UserEvent::DeferredRedraw => {
