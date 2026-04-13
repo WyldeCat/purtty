@@ -296,22 +296,14 @@ impl Renderer {
         let mut glyph_verts: Vec<GlyphVertex> = Vec::with_capacity(rows * cols);
         let mut bg_verts: Vec<QuadVertex> = Vec::new();
 
-        // Pre-compute block boundary view-rows for Y-offset. Each
-        // boundary inserts visual spacing: top padding (above separator)
-        // + bottom padding (below separator).
-        let block_pad = (line_h * 0.7).max(12.0);
-        let block_boundary_rows: Vec<usize> = blocks
-            .iter()
-            .filter(|b| b.start_view_row > 0 && b.start_view_row < rows)
-            .map(|b| b.start_view_row)
-            .collect();
-        let y_offset_for_row = |view_row: usize| -> f32 {
-            let n = block_boundary_rows
-                .iter()
-                .filter(|&&s| s <= view_row)
-                .count();
-            n as f32 * block_pad
-        };
+        // Block boundary padding: we DON'T shift grid rows (that
+        // pushes content below the window). Instead, we'll draw
+        // opaque background strips + separator lines OVER the grid
+        // at boundary rows. This visually creates spacing without
+        // changing any Y positions.
+        // (y_offset_for_row is a no-op — kept for API compatibility
+        // with cursor / selection / URL overlay code.)
+        let y_offset_for_row = |_view_row: usize| -> f32 { 0.0 };
 
         // Link accent color for hovered URLs.
         let link_color = [
@@ -463,20 +455,33 @@ impl Renderer {
         let grid_left = PAD_X - 4.0;
         let grid_w = cols as f32 * cell_w + 8.0;
 
+        let block_strip_h = (line_h * 0.5).max(8.0);
+        let main_bg = self.theme.background.as_array();
+
         for blk in blocks {
             if blk.end_view_row <= blk.start_view_row {
                 continue;
             }
-            let by = grid_top + blk.start_view_row as f32 * line_h
-                + y_offset_for_row(blk.start_view_row);
-            let by_end = grid_top + blk.end_view_row as f32 * line_h
-                + y_offset_for_row(blk.end_view_row.saturating_sub(1));
-            let bh = by_end - by + line_h;
+            let by = grid_top + blk.start_view_row as f32 * line_h;
+            let bh = (blk.end_view_row - blk.start_view_row) as f32 * line_h;
 
-            // Horizontal separator centered in the padding gap between
-            // this block and the previous one.
+            // At block boundaries (not the first block), draw an
+            // opaque background strip that covers the boundary row's
+            // top half + a 1px separator line. This creates visual
+            // spacing by hiding the content underneath.
             if blk.start_view_row > 0 {
-                let sep_y = by - block_pad * 0.5;
+                let strip_y = by - block_strip_h * 0.5;
+                // Opaque background to cover any text at the boundary.
+                QuadRenderer::push_rect(
+                    &mut overlay_verts,
+                    grid_left,
+                    strip_y,
+                    grid_w,
+                    block_strip_h,
+                    main_bg,
+                );
+                // Thin separator line in the center of the strip.
+                let sep_y = strip_y + (block_strip_h - 1.0) * 0.5;
                 QuadRenderer::push_rect(
                     &mut overlay_verts,
                     grid_left,
